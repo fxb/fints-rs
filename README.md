@@ -252,7 +252,7 @@ No features are enabled by default — the library is lightweight with minimal d
 
 ## FinTS Product Registration
 
-To use FinTS with German banks in production, you need a registered product ID from the [Deutsche Kreditwirtschaft](https://www.hbci-zka.de/register/prod_register.htm). Set it via:
+To use FinTS with German banks in production, you need a registered product ID from the [Deutsche Kreditwirtschaft](https://www.fints.org/de/hersteller/produktregistrierung). Set it via:
 
 - `ProductId::new("YOUR_ID")` in code
 - `--product-id YOUR_ID` on the CLI
