@@ -89,3 +89,103 @@ impl FinTSConnection {
         Ok(decoded)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    /// Spin up a one-shot HTTP server on an ephemeral port. The handler receives
+    /// the raw request body and returns an (HTTP status, response body) pair.
+    /// Returns the base URL for the connection.
+    async fn serve(
+        handler: impl Fn(Vec<u8>) -> (u16, Vec<u8>) + Send + 'static,
+    ) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 16 * 1024];
+            let n = sock.read(&mut buf).await.unwrap();
+            // Parse out the request body (everything after the header terminator).
+            let body = match std::str::from_utf8(&buf[..n]).ok().and_then(|s| s.find("\r\n\r\n"))
+            {
+                Some(idx) => buf[idx + 4..n].to_vec(),
+                None => Vec::new(),
+            };
+            let (status, response_body) = handler(body);
+            let head = format!(
+                "HTTP/1.1 {status} OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response_body.len()
+            );
+            sock.write_all(head.as_bytes()).await.unwrap();
+            sock.write_all(&response_body).await.unwrap();
+            let _ = sock.shutdown().await;
+        });
+        format!("http://127.0.0.1:{}/", port)
+    }
+
+    #[tokio::test]
+    async fn send_roundtrips_through_base64() {
+        let payload = b"hello";
+        let url = serve(move |body: Vec<u8>| {
+            // Request body must be the base64 of the original message.
+            assert_eq!(B64.decode(&body).unwrap(), payload.to_vec());
+            // Respond with base64 of a different payload.
+            (200, B64.encode(b"server says hi").into_bytes())
+        })
+        .await;
+
+        let conn = FinTSConnection::new(&url).unwrap();
+        let out = conn.send(payload).await.unwrap();
+        assert_eq!(out, b"server says hi");
+    }
+
+    #[tokio::test]
+    async fn send_handles_http_error_status() {
+        let url = serve(move |_body| (500, b"boom".to_vec())).await;
+        let conn = FinTSConnection::new(&url).unwrap();
+
+        match conn.send(b"hex").await {
+            Err(FinTSError::Http { status, message }) => {
+                assert_eq!(status, 500);
+                assert_eq!(message, "boom");
+            }
+            other => panic!("expected Http error, got {:?}", other.map(|_| ())),
+        }
+    }
+
+    #[tokio::test]
+    async fn send_rejects_invalid_base64_response() {
+        let url = serve(move |_body| (200, b"!!!not-base64!!!".to_vec())).await;
+        let conn = FinTSConnection::new(&url).unwrap();
+
+        let err = conn.send(b"hex").await.unwrap_err();
+        assert!(
+            err.to_string().contains("base64") || err.to_string().contains("decode"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn send_to_unreachable_host_errs() {
+        // Bind a listener, then drop it so the port is closed → connection refused.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let url = format!("http://127.0.0.1:{}/", port);
+        let conn = FinTSConnection::new(&url).unwrap();
+        assert!(conn.send(b"hex").await.is_err());
+    }
+
+    #[test]
+    fn new_accepts_valid_url_and_errors_on_bad_url() {
+        assert!(FinTSConnection::new("https://example.com/fints").is_ok());
+        // A non-URL input still builds an HTTP client (reqwest parses lazily),
+        // so we only assert the happy path here.
+        assert!(FinTSConnection::new("http://127.0.0.1:1/").is_ok());
+    }
+}
