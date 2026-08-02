@@ -24,7 +24,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-fints-rs = "0.1"
+fints-rs = "0.2"
 ```
 
 The crate is published as `fints-rs` on crates.io but the library name is `fints`, so all imports use `use fints::...`.
