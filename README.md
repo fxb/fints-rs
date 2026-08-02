@@ -10,7 +10,7 @@ A pure Rust implementation of the **FinTS 3.0** (formerly HBCI) banking protocol
 - Full FinTS 3.0 PinTan implementation (two-step and decoupled TAN)
 - Typestate protocol layer — invalid dialog state transitions are **compile-time errors**
 - Bank-specific workflows (DKB, generic FinTS banks)
-- Built-in registry of 1000+ German banks with FinTS endpoints
+- Built-in registry of 1700+ German banks with FinTS endpoints (updated 20.05.2026)
 - Account balance, transaction history (MT940), and securities/depot holdings
 - CLI client for interactive banking from the terminal
 - Mock server for integration testing
