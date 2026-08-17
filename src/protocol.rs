@@ -526,6 +526,9 @@ impl<S: std::fmt::Debug> Dialog<S> {
 
         self.message_number += 1;
         let response_bytes = self.connection.send(&msg_bytes).await?;
+        let response_str = String::from_utf8_lossy(&response_bytes);
+        let preview: String = response_str.chars().take(500).collect();
+        info!("[FinTS] Incoming ({} bytes): {}", response_bytes.len(), preview);
         parse_response(&response_bytes, self.message_number - 1)
     }
 

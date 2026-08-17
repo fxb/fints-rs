@@ -408,7 +408,21 @@ pub(crate) fn parse_hiwpd(segments: &[RawSegment]) -> Vec<SecurityHolding> {
             continue;
         }
 
-        // Skip header (DEG0) and account (DEG1), positions start at DEG2+
+        // Per the FinTS spec, HIWPD carries the depot statement as a binary
+        // MT535 blob (analogous to HIKAZ/MT940). Scan the DEGs for it.
+        let mut found_blob = false;
+        for i in 1..seg.deg_count() {
+            if let Some(blob) = read_binary(seg, i, 0) {
+                holdings.extend(super::mt535::parse_mt535(&blob));
+                found_blob = true;
+            }
+        }
+        if found_blob {
+            continue;
+        }
+
+        // Fallback for banks that respond with structured DEGs instead:
+        // skip header (DEG0) and account (DEG1), positions start at DEG2+
         for i in 2..seg.deg_count() {
             let d = seg.deg(i);
             if d.len() < 3 {

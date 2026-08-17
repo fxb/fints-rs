@@ -4,4 +4,5 @@
 //! and parser functions that extract typed data from `RawSegment`.
 
 pub mod builder;
+pub mod mt535;
 pub mod response;
