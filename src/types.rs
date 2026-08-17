@@ -260,6 +260,35 @@ impl ResponseCodeKind {
         }
     }
 
+    /// The numeric FinTS response code ("9050", "3076", …).
+    pub fn code(&self) -> &str {
+        match self {
+            Self::MessageReceived => "0010",
+            Self::OrderExecuted => "0020",
+            Self::TanRequired => "0030",
+            Self::DialogEnded => "0100",
+            Self::TanValid => "0900",
+            Self::Touchdown(_) => "3040",
+            Self::PartialWarnings => "3060",
+            Self::ScaExemption => "3076",
+            Self::AllowedSecurityFunctions(_) => "3920",
+            Self::DecoupledInitiated => "3955",
+            Self::DecoupledPending => "3956",
+            Self::GeneralError => "9010",
+            Self::AuthenticationMissing => "9040",
+            Self::PartialErrors => "9050",
+            Self::UnexpectedInSync => "9110",
+            Self::DataElementMissing => "9160",
+            Self::PinWrong => "9340",
+            Self::DialogAborted => "9800",
+            Self::AccountLocked => "9942",
+            Self::OtherSuccess(code)
+            | Self::OtherWarning(code)
+            | Self::OtherError(code)
+            | Self::Unknown(code) => code,
+        }
+    }
+
     pub fn is_success(&self) -> bool {
         matches!(
             self,

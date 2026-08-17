@@ -178,10 +178,44 @@ fn test_response_check_errors_bank_error() {
     match err {
         fints::FinTSError::BankError { kind, message } => {
             assert_eq!(kind, fints::ResponseCodeKind::DialogAborted);
-            assert_eq!(message, "Dialog abgebrochen");
+            assert_eq!(message, "9800: Dialog abgebrochen");
         }
         _ => panic!("Expected BankError"),
     }
+}
+
+#[test]
+fn test_check_errors_prefers_segment_code_over_generic_global() {
+    // Sparkassen wrap a rejected order in a generic global 9050; the
+    // per-segment HIRMS code carries the actual reason.
+    let response = Response {
+        segments: vec![],
+        global_codes: vec![ResponseCode::new("9050", "Die Nachricht enthält Fehler.")],
+        segment_codes: vec![ResponseCode::new("9010", "Auftrag nicht erlaubt")],
+    };
+    let err = response.check_errors().unwrap_err();
+    match err {
+        fints::FinTSError::BankError { kind, message } => {
+            assert_eq!(kind, fints::ResponseCodeKind::GeneralError);
+            assert_eq!(message, "9010: Auftrag nicht erlaubt");
+        }
+        _ => panic!("Expected BankError"),
+    }
+}
+
+#[test]
+fn test_check_errors_pin_wrong_outranks_segment_errors() {
+    // Credential problems need dedicated handling regardless of where the
+    // code appears.
+    let response = Response {
+        segments: vec![],
+        global_codes: vec![ResponseCode::new("9340", "PIN falsch")],
+        segment_codes: vec![ResponseCode::new("9010", "Auftrag nicht erlaubt")],
+    };
+    assert!(matches!(
+        response.check_errors().unwrap_err(),
+        fints::FinTSError::PinWrong
+    ));
 }
 
 #[test]

@@ -283,17 +283,30 @@ impl Response {
     }
 
     /// Check for fatal errors. Returns `Ok(())` if no errors.
+    ///
+    /// Per-segment codes (HIRMS) are reported before global codes (HIRMG):
+    /// banks answer a rejected order with a generic global 9050/9010
+    /// ("Die Nachricht enthält Fehler") wrapped around the specific
+    /// per-segment reason — the specific one is the actionable error.
+    /// The message carries the numeric code so callers can log/diagnose it.
     pub fn check_errors(&self) -> Result<()> {
         for code in self.all_codes() {
             match &code.kind {
                 ResponseCodeKind::PinWrong => return Err(FinTSError::PinWrong),
                 ResponseCodeKind::AccountLocked => return Err(FinTSError::AccountLocked),
-                k if k.is_error() => return Err(FinTSError::BankError {
-                    kind: code.kind.clone(),
-                    message: code.text.clone(),
-                }),
                 _ => {}
             }
+        }
+        let error = self
+            .segment_codes
+            .iter()
+            .chain(self.global_codes.iter())
+            .find(|code| code.kind.is_error());
+        if let Some(code) = error {
+            return Err(FinTSError::BankError {
+                kind: code.kind.clone(),
+                message: format!("{}: {}", code.kind.code(), code.text),
+            });
         }
         Ok(())
     }
