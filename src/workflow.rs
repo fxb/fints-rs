@@ -121,6 +121,69 @@ pub trait BankOps: Send + Sync {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Shared: resume with a stored system_id (skip HKSYN)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Try to initiate directly with a stored system_id, skipping the sync dialog.
+///
+/// HKSYN mode 0 always requests a NEW system id, so running the sync dialog on
+/// every connection makes the bank see a fresh "device" each time — defeating
+/// device recognition and any SCA exemption (code 3076). When the caller
+/// passes a previously assigned system_id, initialize directly with it instead;
+/// BPD and the security function are negotiated inside `init_negotiate()`.
+///
+/// Returns `None` if the resume attempt failed (caller should fall back to the
+/// full sync flow, which registers a new system id).
+async fn try_resume_init(
+    bank: &BankConfig,
+    username: &UserId,
+    pin: &Pin,
+    product_id: &ProductId,
+    system_id: &SystemId,
+) -> Option<InitiateOutcome> {
+    let dialog = match Dialog::new(bank.url.as_str(), &bank.blz, username, pin, product_id) {
+        Ok(d) => d.with_system_id(system_id),
+        Err(e) => {
+            warn!("[FinTS] Resume: dialog setup failed: {e}");
+            return None;
+        }
+    };
+
+    match dialog.init_negotiate().await {
+        Ok(InitResult::TanRequired(tan_pending, challenge, _resp)) => {
+            info!("[FinTS] Resume with stored system_id: TAN required (decoupled={})",
+                challenge.decoupled);
+            let params = tan_pending.bank_params().clone();
+            Some(InitiateOutcome::NeedTan(InitiateResult {
+                system_id: tan_pending.system_id().clone(),
+                tan_methods: params.tan_methods.clone(),
+                allowed_security_functions: params.allowed_security_functions.clone(),
+                params,
+                dialog: tan_pending,
+                challenge,
+                no_tan_required: false,
+            }))
+        }
+        Ok(InitResult::Opened(open, _resp)) => {
+            info!("[FinTS] Resume with stored system_id: opened without TAN (SCA exemption)");
+            let params = open.bank_params().clone();
+            Some(InitiateOutcome::Authenticated(InitiateNoTanResult {
+                system_id: open.system_id().clone(),
+                tan_methods: params.tan_methods.clone(),
+                allowed_security_functions: params.allowed_security_functions.clone(),
+                params,
+                dialog: open,
+            }))
+        }
+        Err(e) => {
+            warn!("[FinTS] Resume with stored system_id failed ({e}); \
+                   falling back to full sync (new system id)");
+            None
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // DKB implementation
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -182,11 +245,17 @@ impl BankOps for Dkb {
         _target_iban: Option<&Iban>,
         _target_bic: Option<&Bic>,
     ) -> Result<InitiateOutcome> {
-        // ── Phase 1: Sync dialog (get system_id + BPD) ──
-        let mut sync_dialog = self.new_dialog(username, pin, product_id)?;
-        if let Some(sid) = system_id {
-            sync_dialog = sync_dialog.with_system_id(sid);
+        // ── Phase 0: Resume with stored system_id (skip HKSYN) ──
+        if let Some(sid) = system_id.filter(|s| s.is_assigned()) {
+            if let Some(outcome) =
+                try_resume_init(&self.bank, username, pin, product_id, sid).await
+            {
+                return Ok(outcome);
+            }
         }
+
+        // ── Phase 1: Sync dialog (get system_id + BPD) ──
+        let sync_dialog = self.new_dialog(username, pin, product_id)?;
         let (synced, _resp) = sync_dialog.sync().await?;
         let (sync_params, sys_id) = synced.end().await?;
 
@@ -384,10 +453,16 @@ impl BankOps for GenericBank {
         _target_iban: Option<&Iban>,
         _target_bic: Option<&Bic>,
     ) -> Result<InitiateOutcome> {
-        let mut sync_dialog = self.new_dialog(username, pin, product_id)?;
-        if let Some(sid) = system_id {
-            sync_dialog = sync_dialog.with_system_id(sid);
+        // Resume with stored system_id (skip HKSYN) — see try_resume_init.
+        if let Some(sid) = system_id.filter(|s| s.is_assigned()) {
+            if let Some(outcome) =
+                try_resume_init(&self.bank, username, pin, product_id, sid).await
+            {
+                return Ok(outcome);
+            }
         }
+
+        let sync_dialog = self.new_dialog(username, pin, product_id)?;
         let (synced, _) = sync_dialog.sync().await?;
         let (sync_params, sys_id) = synced.end().await?;
 

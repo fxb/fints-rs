@@ -685,6 +685,53 @@ impl Dialog<New> {
         Ok(InitResult::Opened(self.transition(), response))
     }
 
+    /// Dialog initialization for resuming with a stored system_id, where no
+    /// BPD or security function is known yet (no prior sync dialog).
+    ///
+    /// Runs a probe dialog first: HKIDN + HKVVB signed with security function
+    /// 999 and WITHOUT HKTAN — combining HKTAN with 999 is an invalid segment
+    /// composition (banks abort with 9110). The bank answers the probe with
+    /// its allowed security functions (code 3920) and BPD, whether it opens a
+    /// PIN-level dialog or aborts. Then a normal `init()` follows with the
+    /// negotiated security function and HKTAN — keeping the same system_id so
+    /// the bank can recognize this client installation (a precondition for
+    /// granting the SCA exemption, code 3076).
+    pub async fn init_negotiate(mut self) -> Result<InitResult> {
+        info!("[FinTS] Init dialog (negotiate): probing security functions for BLZ={}", self.blz);
+
+        let segments = [
+            self.identify_segment(),
+            self.process_prep_segment(),
+        ];
+
+        let response = self.send_segments(&segments).await?;
+        self.extract_dialog_id(&response);
+        self.params.ingest_response(&response, &mut self.system_id);
+
+        let allowed = response.allowed_security_functions();
+        if !allowed.is_empty() {
+            self.params.allowed_security_functions = allowed;
+            self.params.select_security_function();
+        }
+
+        for c in response.all_codes() {
+            info!("[FinTS] Init(probe): {} - {}", c.code(), c.text);
+        }
+
+        // Close the probe dialog if the bank opened one; ignore errors when
+        // it was aborted server-side.
+        self.send_end().await.ok();
+        self.message_number = 1;
+
+        if self.params.selected_security_function == SecurityFunction::pin_only() {
+            return Err(crate::error::FinTSError::Dialog(
+                "bank did not announce security functions (no 3920) during negotiation".into(),
+            ));
+        }
+
+        self.init().await
+    }
+
     /// Initialize WITHOUT HKTAN — PIN-only. Used when bank doesn't require SCA.
     pub async fn init_no_tan(mut self) -> Result<(Dialog<Open>, Response)> {
         info!("[FinTS] Init (no HKTAN)");
