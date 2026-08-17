@@ -566,6 +566,12 @@ pub struct SepaAccount {
     pub owner: Option<String>,
     pub product_name: Option<String>,
     pub currency: Option<Currency>,
+    /// HIUPD "Kontoart" code. Spec ranges: 1-9 Kontokorrent (checking),
+    /// 10-19 Sparkonto, 20-29 Festgeld, 30-39 Wertpapierdepot (securities),
+    /// 40-49 Kredit/Darlehen, 50-59 Kreditkarte, 60-69 Fonds-Depot,
+    /// 70-79 Bausparvertrag, 80-89 Versicherung, 90-99 sonstige.
+    #[serde(default)]
+    pub account_type_code: Option<u16>,
 }
 
 /// Account balance.

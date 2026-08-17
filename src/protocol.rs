@@ -110,9 +110,24 @@ pub(crate) enum Segment {
 
 impl Segment {
     /// Convert to raw DEGs using bank parameters for version selection.
-    pub(crate) fn to_degs(&self, params: &BankParams) -> Vec<DEG> {
+    ///
+    /// Fails when the negotiated segment version requires the international
+    /// account format (KTI, v7) but the account has no IBAN (national-only
+    /// accounts such as securities depots).
+    pub(crate) fn to_degs(&self, params: &BankParams) -> Result<Vec<DEG>> {
         use crate::segments::builder::*;
-        match self {
+
+        fn require_iban(account: &Account, segment: &str, version: u16) -> Result<()> {
+            if version >= 7 && account.iban().is_empty() {
+                return Err(FinTSError::Dialog(format!(
+                    "account {} has no IBAN, but the bank requires {segment} v{version} \
+                     (international format)", account.display_id()
+                )));
+            }
+            Ok(())
+        }
+
+        Ok(match self {
             Segment::Identify { blz, user_id, system_id } => {
                 hkidn(0, blz.as_str(), user_id.as_str(), system_id.as_str())
             }
@@ -124,15 +139,18 @@ impl Segment {
             }
             Segment::Balance { account } => {
                 let version = params.supported_version("HISALS", 7).max(5);
-                hksal(0, version, account.iban(), account.bic(), None)
+                require_iban(account, "HKSAL", version)?;
+                hksal(0, version, account.iban(), account.bic(), account.national_identity(), None)
             }
             Segment::Transactions { account, start_date, end_date, touchdown } => {
                 let version = params.supported_version("HIKAZS", 7).max(5);
-                hkkaz(0, version, account.iban(), account.bic(), *start_date, *end_date, touchdown.as_ref().map(|t| t.as_str()))
+                require_iban(account, "HKKAZ", version)?;
+                hkkaz(0, version, account.iban(), account.bic(), account.national_identity(), *start_date, *end_date, touchdown.as_ref().map(|t| t.as_str()))
             }
             Segment::Holdings { account, currency, touchdown } => {
                 let version = params.supported_version("HIWPDS", 7).max(1);
-                hkwpd(0, version, account.iban(), account.bic(), currency.as_ref().map(|c| c.as_str()), touchdown.as_ref().map(|t| t.as_str()))
+                require_iban(account, "HKWPD", version)?;
+                hkwpd(0, version, account.iban(), account.bic(), account.national_identity(), currency.as_ref().map(|c| c.as_str()), touchdown.as_ref().map(|t| t.as_str()))
             }
             Segment::TanProcess4 { reference_seg, tan_medium } => {
                 let version = params.hktan_version();
@@ -149,7 +167,7 @@ impl Segment {
             Segment::End { dialog_id } => {
                 hkend(0, dialog_id.as_str())
             }
-        }
+        })
     }
 }
 
@@ -767,16 +785,21 @@ impl Dialog<Synced> {
 
 /// A validated bank account identifier (Kontoverbindung International).
 ///
-/// Both IBAN and BIC are required and non-empty. This is enforced at
-/// construction time — you cannot create an `Account` with a missing BIC.
-/// All typed business operations on `Dialog<Open>` take `&Account`,
-/// making it a compile error to pass raw strings that might be empty.
+/// An account addressed either internationally (IBAN + BIC) or nationally
+/// (Konto-/Depotnummer + BLZ). This is enforced at construction time — you
+/// cannot create an `Account` without one complete identity. All typed
+/// business operations on `Dialog<Open>` take `&Account`, making it a
+/// compile error to pass raw strings that might be empty.
 ///
 /// ```
 /// use fints::protocol::Account;
 ///
-/// // This works:
+/// // International (IBAN + BIC):
 /// let acc = Account::new("DE89370400440532013000", "COBADEFFXXX").unwrap();
+///
+/// // National (Konto-/Depotnummer + BLZ) — e.g. a securities depot,
+/// // which has no IBAN. Works with the v5/v6 national segment formats:
+/// let depot = Account::national("8030189693", "20050550", "HASPDEHHXXX").unwrap();
 ///
 /// // This fails at construction time:
 /// let bad = Account::new("DE89370400440532013000", "");
@@ -786,10 +809,16 @@ impl Dialog<Synced> {
 pub struct Account {
     iban: Iban,
     bic: Bic,
+    /// National identity: (Konto-/Depotnummer, BLZ). Per the FinTS spec the
+    /// number is any identifier scoped to the bank (BLZ) — e.g. a depot
+    /// number. It need not be a payment-account Kontonummer and has no IBAN
+    /// representation.
+    national: Option<(String, Blz)>,
 }
 
 impl Account {
-    /// Create a validated account. Returns `Err` if IBAN or BIC is empty.
+    /// Create a validated account addressed by IBAN + BIC.
+    /// Returns `Err` if IBAN or BIC is empty.
     pub fn new(iban: &str, bic: &str) -> Result<Self> {
         if iban.is_empty() {
             return Err(FinTSError::Dialog("IBAN must not be empty".into()));
@@ -797,11 +826,47 @@ impl Account {
         if bic.is_empty() {
             return Err(FinTSError::Dialog("BIC must not be empty. Please set the BIC in the account settings.".into()));
         }
-        Ok(Self { iban: Iban::new(iban), bic: Bic::new(bic) })
+        Ok(Self { iban: Iban::new(iban), bic: Bic::new(bic), national: None })
+    }
+
+    /// Create a validated account addressed by the national identity
+    /// (Konto-/Depotnummer + BLZ). Use this for accounts without an IBAN,
+    /// e.g. securities depots. Only usable with segment versions that take
+    /// the national account format (HKSAL/HKKAZ v5-v6, HKWPD v1-v6);
+    /// operations negotiated to v7 (KTI) fail with a clear error.
+    pub fn national(account_number: &str, blz: &str, bic: &str) -> Result<Self> {
+        if account_number.is_empty() {
+            return Err(FinTSError::Dialog("account number must not be empty".into()));
+        }
+        if blz.len() != 8 || !blz.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(FinTSError::Dialog(format!("invalid BLZ '{blz}': expected 8 digits")));
+        }
+        if bic.is_empty() {
+            return Err(FinTSError::Dialog("BIC must not be empty. Please set the BIC in the account settings.".into()));
+        }
+        Ok(Self {
+            iban: Iban::new(""),
+            bic: Bic::new(bic),
+            national: Some((account_number.to_string(), Blz::new(blz))),
+        })
     }
 
     pub fn iban(&self) -> &str { self.iban.as_str() }
     pub fn bic(&self) -> &str { self.bic.as_str() }
+
+    /// National identity (Konto-/Depotnummer, BLZ), when constructed via
+    /// [`Account::national`].
+    pub fn national_identity(&self) -> Option<(&str, &str)> {
+        self.national.as_ref().map(|(n, b)| (n.as_str(), b.as_str()))
+    }
+
+    /// Display identifier for log/error messages: IBAN or "number@blz".
+    pub fn display_id(&self) -> String {
+        match &self.national {
+            Some((n, b)) => format!("{n}@{b}"),
+            None => self.iban.as_str().to_string(),
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

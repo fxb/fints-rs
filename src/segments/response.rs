@@ -213,6 +213,7 @@ pub(crate) fn parse_hispa(seg: &RawSegment) -> Vec<SepaAccount> {
             owner: None,
             product_name: None,
             currency: None,
+            account_type_code: None,
         });
     }
 
@@ -250,6 +251,19 @@ pub(crate) fn parse_hiupd(seg: &RawSegment) -> Option<SepaAccount> {
     let product_name = read_opt_str(seg, 8, 0).or_else(|| read_opt_str(seg, 9, 0));
     let currency = read_opt_str(seg, 5, 0);
 
+    // Kontoart: a 1-2 digit numeric DE near index 4 (after Kundennummer,
+    // before currency). Scan defensively since DEG positions shift between
+    // HIUPD versions; the Kundennummer is numeric too but longer than 2
+    // digits in practice.
+    let mut account_type_code = None;
+    for i in 3..=5usize.min(seg.deg_count().saturating_sub(1)) {
+        let s = seg.deg(i).get_str(0);
+        if (1..=2).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_digit()) {
+            account_type_code = s.parse::<u16>().ok();
+            break;
+        }
+    }
+
     Some(SepaAccount {
         iban: Iban::new(iban),
         bic: Bic::new(bic),
@@ -259,6 +273,7 @@ pub(crate) fn parse_hiupd(seg: &RawSegment) -> Option<SepaAccount> {
         owner,
         product_name,
         currency: currency.map(Currency::new),
+        account_type_code,
     })
 }
 
@@ -701,6 +716,30 @@ mod tests {
     fn parse_segment(s: &str) -> RawSegment {
         let segments = parser::parse_message(s.as_bytes()).unwrap();
         segments.into_iter().next().unwrap()
+    }
+
+    // ── HIUPD Kontoart ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_hiupd_kontoart_depot() {
+        // Depot: no IBAN, Kontoart 30 (Wertpapierdepot)
+        let seg = parse_segment(
+            "HIUPD:10:6:3+8030189693::280:20050550++1207503333+30+EUR+Owner Name++Klassik Depot+'",
+        );
+        let acc = parse_hiupd(&seg).expect("should parse");
+        assert_eq!(acc.account_number, "8030189693");
+        assert_eq!(acc.account_type_code, Some(30));
+        assert!(acc.iban.as_str().is_empty());
+    }
+
+    #[test]
+    fn test_parse_hiupd_kontoart_checking_with_iban() {
+        let seg = parse_segment(
+            "HIUPD:11:6:3+1207503333::280:20050550+DE72200505501207503333+1207503333+1+EUR+Owner Name++HaspaJoker+'",
+        );
+        let acc = parse_hiupd(&seg).expect("should parse");
+        assert_eq!(acc.account_type_code, Some(1));
+        assert_eq!(acc.iban.as_str(), "DE72200505501207503333");
     }
 
     // ── IBAN / BIC heuristics ──────────────────────────────────────────
