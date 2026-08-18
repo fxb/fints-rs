@@ -618,6 +618,44 @@ pub(crate) fn hkwpd(
     degs
 }
 
+// ---- DKKKU (Kreditkartenumsätze) - Credit Card Transactions, version 2 ----
+// Bank-proprietary segment (prefix "D" instead of "H"). Reverse-engineered from
+// python-fints. BPD parameter segment: DIKKUS. Response segment: DIKKU.
+
+pub(crate) fn dkkku(
+    segment_number: u16,
+    iban: &str,
+    national: Option<(&str, &str)>,
+    credit_card_number: &str,
+    start_date: Option<NaiveDate>,
+    touchdown: Option<&str>,
+) -> Vec<DEG> {
+    let (account_number, blz) = national_identity(iban, national);
+    let mut degs = vec![
+        seg_header("DKKKU", segment_number, 2),
+        // Account (Kontoverbindung, national format)
+        deg(vec![
+            de_text(&account_number),
+            de_empty(),
+            de_text("280"),
+            de_text(&blz),
+        ]),
+        // Account number / card identifier
+        deg1(de_text(credit_card_number)),
+        // Sub-account identifier (optional)
+        deg1(de_empty()),
+        // From date (optional — no end date in DKKKU2)
+        deg1(if let Some(d) = start_date { de_date(d) } else { de_empty() }),
+        // Max entries (optional)
+        deg1(de_empty()),
+    ];
+    // Touchdown / continuation mark
+    if let Some(td) = touchdown {
+        degs.push(deg1(de_text(td)));
+    }
+    degs
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -805,6 +843,23 @@ mod tests {
             wire,
             "HKWPD:3:7+DE04120300001084174299:BYLADEM1001++++TOUCH123'"
         );
+    }
+
+    #[test]
+    fn dkkku_v2_wire_format() {
+        let start = chrono::NaiveDate::from_ymd_opt(2026, 5, 20).unwrap();
+        let degs = dkkku(3, "DE72200505501207503333", None, "5232520070549445", Some(start), None);
+        let bytes = serialize_segment(&degs).unwrap();
+        let wire = String::from_utf8(bytes).unwrap();
+        assert_eq!(wire, "DKKKU:3:2+1207503333::280:20050550+5232520070549445++20260520'");
+    }
+
+    #[test]
+    fn dkkku_v2_with_touchdown() {
+        let degs = dkkku(3, "DE72200505501207503333", None, "5232520070549445", None, Some("NEXT123"));
+        let bytes = serialize_segment(&degs).unwrap();
+        let wire = String::from_utf8(bytes).unwrap();
+        assert_eq!(wire, "DKKKU:3:2+1207503333::280:20050550+5232520070549445++++NEXT123'");
     }
 
     #[test]

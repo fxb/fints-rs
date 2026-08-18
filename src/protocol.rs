@@ -98,6 +98,13 @@ pub(crate) enum Segment {
         currency: Option<Currency>,
         touchdown: Option<TouchdownPoint>,
     },
+    /// DKKKU: Kreditkartenumsätze (credit card transactions, bank-proprietary)
+    CreditCardTransactions {
+        account: Account,
+        credit_card_number: String,
+        start_date: Option<NaiveDate>,
+        touchdown: Option<TouchdownPoint>,
+    },
     /// HKTAN process 4: initiate TAN for a referenced segment
     TanProcess4 { reference_seg: SegmentRef, tan_medium: Option<TanMediumName> },
     /// HKTAN process S: poll decoupled TAN status
@@ -151,6 +158,9 @@ impl Segment {
                 let version = params.supported_version("HIWPDS", 7).max(1);
                 require_iban(account, "HKWPD", version)?;
                 hkwpd(0, version, account.iban(), account.bic(), account.national_identity(), currency.as_ref().map(|c| c.as_str()), touchdown.as_ref().map(|t| t.as_str()))
+            }
+            Segment::CreditCardTransactions { account, credit_card_number, start_date, touchdown } => {
+                dkkku(0, account.iban(), account.national_identity(), credit_card_number, *start_date, touchdown.as_ref().map(|t| t.as_str()))
             }
             Segment::TanProcess4 { reference_seg, tan_medium } => {
                 let version = params.hktan_version();
@@ -396,7 +406,10 @@ impl BankParams {
                     }
                 }
                 _ => {
-                    if stype.starts_with("HI") && stype.len() >= 5 && stype.ends_with('S') {
+                    let is_bpd = stype.len() >= 5
+                        && stype.ends_with('S')
+                        && (stype.starts_with("HI") || stype.starts_with("DI"));
+                    if is_bpd {
                         self.bpd_segments.push(seg.clone());
                     }
                 }
@@ -914,6 +927,22 @@ pub enum TransactionResult {
     NeedTan(TanChallenge),
 }
 
+/// Result of a credit card transaction request.
+pub struct CreditCardTransactionPage {
+    /// Parsed credit card transactions from DIKKU segments.
+    pub transactions: Vec<Transaction>,
+    /// Raw response for debugging.
+    pub response: Response,
+    /// If Some, more data is available — call again with this touchdown value.
+    pub touchdown: Option<TouchdownPoint>,
+}
+
+/// Result of a credit card transaction request.
+pub enum CreditCardTransactionResult {
+    Success(CreditCardTransactionPage),
+    NeedTan(TanChallenge),
+}
+
 /// Result of a single securities holdings request page.
 pub struct HoldingsPage {
     /// Parsed securities positions.
@@ -1110,6 +1139,55 @@ impl Dialog<Open> {
 
         Ok(HoldingsResult::Success(HoldingsPage {
             holdings,
+            touchdown: td,
+        }))
+    }
+
+    /// Request credit card transactions (DKKKU, bank-proprietary).
+    ///
+    /// Returns the raw response for inspection — DIKKU response parsing is
+    /// not yet implemented.
+    pub async fn credit_card_transactions(
+        &mut self,
+        account: &Account,
+        credit_card_number: &str,
+        start_date: Option<NaiveDate>,
+        touchdown: Option<&TouchdownPoint>,
+    ) -> Result<CreditCardTransactionResult> {
+        // DKKKU is bank-proprietary and not in HIPINS — never bundle
+        // HKTAN:4 (the bank rejects "distributed signing" for it).
+        info!("[FinTS] credit card transactions: DKKKU (no HKTAN)");
+
+        let segments = vec![
+            Segment::CreditCardTransactions {
+                account: account.clone(),
+                credit_card_number: credit_card_number.to_string(),
+                start_date,
+                touchdown: touchdown.cloned(),
+            },
+        ];
+
+        let response = self.send_segments(&segments).await?;
+
+        for c in response.all_codes() {
+            if c.is_error() || c.is_warning() {
+                info!("[FinTS] DKKKU: {} - {}", c.code(), c.text);
+            }
+        }
+
+        if response.needs_tan() && !response.has_sca_exemption() {
+            if let Some(challenge) = response.get_tan_challenge() {
+                return Ok(CreditCardTransactionResult::NeedTan(challenge));
+            }
+        }
+
+        response.check_errors()?;
+
+        let td = response.touchdown();
+        let transactions = parse_dikku(&response.segments);
+        Ok(CreditCardTransactionResult::Success(CreditCardTransactionPage {
+            transactions,
+            response,
             touchdown: td,
         }))
     }

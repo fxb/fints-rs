@@ -59,6 +59,10 @@ pub struct FetchOpts {
     pub transactions: bool,
     /// Fetch securities holdings (HKWPD). Default: true.
     pub holdings: bool,
+    /// Fetch credit card transactions (DKKKU). Requires `credit_card_number`.
+    pub credit_card: bool,
+    /// Credit card number (PAN) for DKKKU requests.
+    pub credit_card_number: Option<String>,
     /// Days of transaction history to fetch. Default: 90.
     pub days: u32,
 }
@@ -66,15 +70,15 @@ pub struct FetchOpts {
 impl FetchOpts {
     /// Fetch everything: balance, transactions, and holdings.
     pub fn all(days: u32) -> Self {
-        Self { balance: true, transactions: true, holdings: true, days }
+        Self { balance: true, transactions: true, holdings: true, days, ..Default::default() }
     }
     /// Fetch only balance (single request, fast).
     pub fn balance_only() -> Self {
-        Self { balance: true, transactions: false, holdings: false, days: 0 }
+        Self { balance: true, ..Default::default() }
     }
     /// Skip holdings (for accounts without a depot).
     pub fn no_holdings(days: u32) -> Self {
-        Self { balance: true, transactions: true, holdings: false, days }
+        Self { balance: true, transactions: true, days, ..Default::default() }
     }
 }
 
@@ -634,7 +638,7 @@ impl AnyBank {
         };
 
         // ── Transactions ──
-        let transactions = if opts.transactions {
+        let mut transactions = if opts.transactions {
             let end_date = chrono::Utc::now().date_naive();
             let start_date = end_date - chrono::Duration::days(opts.days.max(1) as i64);
             let mut all_booked = Mt940Data::new();
@@ -679,6 +683,37 @@ impl AnyBank {
         } else {
             Vec::new()
         };
+
+        // ── Credit card transactions (DKKKU) ──
+        if opts.credit_card {
+            if let Some(ref card_number) = opts.credit_card_number {
+                let start_date = if opts.days > 0 {
+                    Some(chrono::Utc::now().date_naive() - chrono::Duration::days(opts.days.max(1) as i64))
+                } else {
+                    None
+                };
+                let mut td: Option<TouchdownPoint> = None;
+                loop {
+                    use crate::protocol::CreditCardTransactionResult;
+                    match dialog.credit_card_transactions(account, card_number, start_date, td.as_ref()).await {
+                        Ok(CreditCardTransactionResult::Success(page)) => {
+                            info!("[FinTS] DKKKU: {} credit card transactions", page.transactions.len());
+                            transactions.extend(page.transactions);
+                            td = page.touchdown;
+                            if td.is_none() { break; }
+                        }
+                        Ok(CreditCardTransactionResult::NeedTan(_)) => {
+                            warn!("Credit card transactions require TAN — skipping");
+                            break;
+                        }
+                        Err(e) => {
+                            warn!("Credit card transactions failed: {}", e);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
 
         Ok(FetchResult { balance, transactions, holdings })
     }

@@ -84,6 +84,7 @@ pub use protocol::{
     New, Synced, Open, TanPending,
     InitResult, SendResult, PollResult,
     BalanceResult, TransactionResult, TransactionPage,
+    CreditCardTransactionResult, CreditCardTransactionPage,
     HoldingsResult, HoldingsPage,
 };
 

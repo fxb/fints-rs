@@ -707,6 +707,147 @@ pub(crate) fn find_highest_segment_version(
     highest
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// DIKKU (credit card transactions) response parser
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Parse a FinTS amount string (comma as decimal separator, e.g. "200," or "157,5").
+fn parse_fints_amount(s: &str) -> Option<Decimal> {
+    if s.is_empty() {
+        return None;
+    }
+    Decimal::from_str(&s.replace(',', ".")).ok()
+}
+
+/// Parse a FinTS date string (YYYYMMDD) to NaiveDate.
+fn parse_fints_date(s: &str) -> Option<NaiveDate> {
+    if s.len() == 8 {
+        NaiveDate::parse_from_str(s, "%Y%m%d").ok()
+    } else {
+        None
+    }
+}
+
+/// Parse DIKKU segments into transactions. Each DIKKU segment contains a
+/// balance DEG (index 3) and transaction DEGs (index 6+). Each transaction
+/// DEG is a colon-separated list of data elements within a single DEG.
+///
+/// Field layout (from reverse engineering):
+///   0: card number
+///   1: transaction date (YYYYMMDD)
+///   2: value date (YYYYMMDD)
+///   3: (unknown, usually empty)
+///   4: original amount (comma decimal)
+///   5: original currency
+///   6: original D/C
+///   7: exchange rate
+///   8: amount in account currency
+///   9: account currency
+///  10: D/C
+///  11: merchant name / description
+///  12: merchant city
+///  19: settled indicator (J/N)
+///  21: MCC (merchant category code)
+pub(crate) fn parse_dikku(segments: &[RawSegment]) -> Vec<Transaction> {
+    let mut transactions = Vec::new();
+
+    for seg in segments.iter().filter(|s| s.segment_type() == "DIKKU") {
+        // Transaction DEGs start at index 6 (indices 1-5 are account, hash,
+        // balance, and two ignored fields).
+        for di in 6..seg.deg_count() {
+            let deg = seg.deg(di);
+            if deg.len() < 12 {
+                continue;
+            }
+
+            let tx_date_str = deg.get_str(1);
+            let val_date_str = deg.get_str(2);
+            let amount_str = deg.get_str(8);
+            let currency_str = deg.get_str(9);
+            let debit_credit = deg.get_str(10);
+            let merchant = deg.get_str(11);
+            let city = deg.get_str(12);
+            let settled = if deg.len() > 19 { deg.get_str(19) } else { String::new() };
+            let mcc = if deg.len() > 21 { deg.get_str(21) } else { String::new() };
+
+            let date = match parse_fints_date(&tx_date_str) {
+                Some(d) => d,
+                None => continue,
+            };
+            let valuta_date = parse_fints_date(&val_date_str);
+
+            let raw_amount = match parse_fints_amount(&amount_str) {
+                Some(a) => a,
+                None => continue,
+            };
+            let amount = if debit_credit == "D" { -raw_amount } else { raw_amount };
+
+            let currency = if currency_str.is_empty() {
+                Currency::new("EUR")
+            } else {
+                Currency::new(&currency_str)
+            };
+
+            let purpose = if city.is_empty() {
+                merchant.clone()
+            } else {
+                format!("{merchant}, {city}")
+            };
+
+            let posting_text = if !mcc.is_empty() {
+                Some(format!("MCC:{mcc}"))
+            } else {
+                None
+            };
+
+            let status = if settled == "J" {
+                TransactionStatus::Booked
+            } else {
+                TransactionStatus::Pending
+            };
+
+            let orig_amount_str = deg.get_str(4);
+            let orig_currency_str = deg.get_str(5);
+            let orig_dc = deg.get_str(6);
+            let exchange_rate_str = deg.get_str(7);
+
+            let raw = serde_json::json!({
+                "card_number": deg.get_str(0),
+                "date": tx_date_str,
+                "value_date": val_date_str,
+                "original_amount": orig_amount_str,
+                "original_currency": orig_currency_str,
+                "original_debit_credit": orig_dc,
+                "exchange_rate": exchange_rate_str,
+                "amount": amount_str,
+                "currency": currency_str,
+                "debit_credit": debit_credit,
+                "merchant": merchant,
+                "city": city,
+                "settled": settled,
+                "mcc": mcc,
+            });
+
+            transactions.push(Transaction {
+                date,
+                valuta_date,
+                amount,
+                currency,
+                applicant_name: if merchant.is_empty() { None } else { Some(merchant) },
+                applicant_iban: None,
+                applicant_bic: None,
+                purpose: Some(purpose),
+                posting_text,
+                reference: None,
+                raw,
+                status,
+            });
+        }
+    }
+
+    transactions
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
