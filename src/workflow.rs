@@ -579,15 +579,53 @@ impl AnyBank {
         account: &Account,
         opts: &FetchOpts,
     ) -> Result<FetchResult> {
+        self.fetch_with_opts_inner(dialog, account, opts, None).await
+    }
+
+    /// Like `fetch_with_opts` but with a callback for per-request TAN events.
+    /// When a business operation (balance/transactions/holdings) requires TAN,
+    /// `on_tan(true)` is called, the TAN is polled until confirmed, then
+    /// `on_tan(false)` is called and the operation is retried.
+    pub async fn fetch_with_tan_handler(
+        &self,
+        dialog: &mut Dialog<Open>,
+        account: &Account,
+        opts: &FetchOpts,
+        on_tan: &(dyn Fn(bool) + Send + Sync),
+    ) -> Result<FetchResult> {
+        self.fetch_with_opts_inner(dialog, account, opts, Some(on_tan)).await
+    }
+
+    async fn fetch_with_opts_inner(
+        &self,
+        dialog: &mut Dialog<Open>,
+        account: &Account,
+        opts: &FetchOpts,
+        on_tan: Option<&(dyn Fn(bool) + Send + Sync)>,
+    ) -> Result<FetchResult> {
         use tracing::warn;
-        use crate::protocol::{BalanceResult, TransactionResult, HoldingsResult};
+        use crate::protocol::{BalanceResult, TransactionResult};
         use crate::types::{Mt940Data, TransactionStatus, TouchdownPoint};
 
         // ── Balance ──
         let balance = if opts.balance {
             match dialog.balance(account).await {
                 Ok(BalanceResult::Success(b)) => Some(b),
-                Ok(BalanceResult::NeedTan(_)) => { warn!("Balance requires TAN — skipping"); None }
+                Ok(BalanceResult::NeedTan(challenge)) => {
+                    if let Some(notify) = on_tan {
+                        notify(true);
+                        await_decoupled_tan(dialog, &challenge.task_reference).await?;
+                        notify(false);
+                        match dialog.balance(account).await {
+                            Ok(BalanceResult::Success(b)) => Some(b),
+                            Ok(_) => { warn!("Balance still unavailable after TAN"); None }
+                            Err(e) => { warn!("Balance retry failed: {}", e); None }
+                        }
+                    } else {
+                        warn!("Balance requires TAN — skipping");
+                        None
+                    }
+                }
                 Ok(BalanceResult::Empty) => None,
                 Err(e) => { warn!("Balance failed: {}", e); None }
             }
@@ -604,7 +642,15 @@ impl AnyBank {
             let mut td: Option<TouchdownPoint> = None;
             loop {
                 match dialog.transactions(account, start_date, end_date, td.as_ref()).await? {
-                    TransactionResult::NeedTan(_) => break,
+                    TransactionResult::NeedTan(challenge) => {
+                        if let Some(notify) = on_tan {
+                            notify(true);
+                            await_decoupled_tan(dialog, &challenge.task_reference).await?;
+                            notify(false);
+                            continue; // retry same page
+                        }
+                        break;
+                    }
                     TransactionResult::Success(page) => {
                         if !page.booked.is_empty() { all_booked.extend(page.booked.0); }
                         if !page.pending.is_empty() { all_pending.extend(page.pending.0); }
@@ -636,6 +682,26 @@ impl AnyBank {
 
         Ok(FetchResult { balance, transactions, holdings })
     }
+}
+
+const TAN_POLL_MAX: u32 = 30;
+const TAN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3);
+
+async fn await_decoupled_tan(
+    dialog: &mut Dialog<Open>,
+    task_reference: &crate::types::TaskReference,
+) -> Result<()> {
+    use tracing::info;
+    for attempt in 1..=TAN_POLL_MAX {
+        tokio::time::sleep(TAN_POLL_INTERVAL).await;
+        if dialog.poll_decoupled_tan(task_reference).await? {
+            info!("[FinTS] Per-request TAN confirmed after {attempt} polls");
+            return Ok(());
+        }
+    }
+    Err(crate::FinTSError::Dialog(
+        "pushTAN was not confirmed in time for the data request".into(),
+    ))
 }
 
 /// Look up a bank implementation by its BLZ (Bankleitzahl).

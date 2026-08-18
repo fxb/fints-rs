@@ -1114,6 +1114,30 @@ impl Dialog<Open> {
         }))
     }
 
+    /// Poll decoupled TAN status from an Open dialog. Used when a business
+    /// operation (balance/transactions/holdings) returns `NeedTan` — the dialog
+    /// stays `Open` (unlike the `Dialog<TanPending>` flow during initiation).
+    /// Returns `true` if confirmed, `false` if still pending.
+    pub async fn poll_decoupled_tan(
+        &mut self,
+        task_reference: &TaskReference,
+    ) -> Result<bool> {
+        let segments = [Segment::TanPollDecoupled {
+            task_reference: task_reference.clone(),
+            tan_medium: self.params.selected_tan_medium.clone(),
+        }];
+        let response = self.send_segments(&segments).await?;
+        for c in response.all_codes() {
+            info!("[FinTS] Poll (open): {} - {}", c.code(), c.text);
+        }
+        if response.is_decoupled_pending() {
+            return Ok(false);
+        }
+        response.check_errors()?;
+        self.params.ingest_response(&response, &mut self.system_id);
+        Ok(true)
+    }
+
     /// End the dialog.
     pub async fn end(mut self) -> Result<()> {
         self.send_end().await
