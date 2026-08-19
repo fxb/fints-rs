@@ -1038,8 +1038,8 @@ impl Dialog<Open> {
             },
         ];
 
-        if is_first && needs_tan {
-            info!("[FinTS] transactions: HKKAZ + HKTAN:4 (HIPINS: TAN required)");
+        if needs_tan {
+            info!("[FinTS] transactions: HKKAZ + HKTAN:4 (HIPINS: TAN required{})", if is_first { "" } else { ", touchdown" });
             segments.push(Segment::TanProcess4 {
                 reference_seg: SegmentRef::new("HKKAZ"),
                 tan_medium: self.params.selected_tan_medium.clone(),
@@ -1101,8 +1101,8 @@ impl Dialog<Open> {
             },
         ];
 
-        if is_first && needs_tan {
-            info!("[FinTS] holdings: HKWPD + HKTAN:4 (HIPINS: TAN required)");
+        if needs_tan {
+            info!("[FinTS] holdings: HKWPD + HKTAN:4 (HIPINS: TAN required{})", if is_first { "" } else { ", touchdown" });
             segments.push(Segment::TanProcess4 {
                 reference_seg: SegmentRef::new("HKWPD"),
                 tan_medium: self.params.selected_tan_medium.clone(),
