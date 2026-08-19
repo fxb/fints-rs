@@ -776,7 +776,7 @@ fn parse_mt940(data: &[u8], status: TransactionStatus) -> Result<Vec<Transaction
     let mt940_text = cow.into_owned();
 
     let cleaned: String = mt940_text.lines()
-        .filter(|l| { let t = l.trim(); !t.is_empty() && t != "-" && t != "--" })
+        .filter(|l| { let t = l.trim(); !t.is_empty() && t != "--" })
         .collect::<Vec<_>>().join("\r\n") + "\r\n";
 
     info!("[MT940] input: {} bytes, decoded: {} chars, cleaned: {} chars",
