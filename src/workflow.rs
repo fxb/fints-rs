@@ -663,11 +663,18 @@ impl AnyBank {
                     }
                 }
             }
-            let mut txns = parse_mt940(all_booked.as_bytes(), TransactionStatus::Booked)
-                .unwrap_or_default();
+            let mut txns = match parse_mt940(all_booked.as_bytes(), TransactionStatus::Booked) {
+                Ok(t) => t,
+                Err(e) => {
+                    warn!("MT940 booked parse failed ({} bytes): {}", all_booked.as_bytes().len(), e);
+                    Vec::new()
+                }
+            };
             if !all_pending.is_empty() {
-                txns.extend(parse_mt940(all_pending.as_bytes(), TransactionStatus::Pending)
-                    .unwrap_or_default());
+                match parse_mt940(all_pending.as_bytes(), TransactionStatus::Pending) {
+                    Ok(t) => txns.extend(t),
+                    Err(e) => warn!("MT940 pending parse failed ({} bytes): {}", all_pending.as_bytes().len(), e),
+                }
             }
             txns
         } else {
