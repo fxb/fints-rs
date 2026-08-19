@@ -779,9 +779,20 @@ fn parse_mt940(data: &[u8], status: TransactionStatus) -> Result<Vec<Transaction
         .filter(|l| { let t = l.trim(); !t.is_empty() && t != "-" && t != "--" })
         .collect::<Vec<_>>().join("\r\n") + "\r\n";
 
+    info!("[MT940] input: {} bytes, decoded: {} chars, cleaned: {} chars",
+        data.len(), mt940_text.len(), cleaned.len());
+    if cleaned.len() < 200 {
+        info!("[MT940] cleaned text: {:?}", &cleaned);
+    } else {
+        info!("[MT940] first 200 chars: {:?}", &cleaned[..200]);
+    }
+
     let sanitized = mt940::sanitizers::to_swift_charset(&cleaned);
     let messages = mt940::parse_mt940(&sanitized)
         .map_err(|e| FinTSError::Mt940(format!("MT940 parse error: {}", e)))?;
+    info!("[MT940] parsed {} messages, {} total statement lines",
+        messages.len(),
+        messages.iter().map(|m| m.statement_lines.len()).sum::<usize>());
 
     let mut transactions = Vec::new();
     for msg in messages {
