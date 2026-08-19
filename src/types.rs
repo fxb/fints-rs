@@ -90,9 +90,6 @@ impl Mt940Data {
         &self.0
     }
     pub fn extend(&mut self, data: Vec<u8>) {
-        if !self.0.is_empty() && !self.0.ends_with(b"\r\n") {
-            self.0.extend_from_slice(b"\r\n");
-        }
         self.0.extend(data);
     }
 }
