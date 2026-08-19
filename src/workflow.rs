@@ -768,6 +768,20 @@ pub fn bank_ops_with_config(config: BankConfig) -> AnyBank {
 // MT940 parsing
 // ═══════════════════════════════════════════════════════════════════════════════
 
+fn fix_invalid_feb29(line: &mut String) {
+    // :61: value date is at chars 4..10 (YYMMDD). If it's Feb 29 in a
+    // non-leap year, change to Feb 28.
+    if line.len() >= 10 && &line[8..10] == "29" && &line[6..8] == "02" {
+        let yy: u32 = line[4..6].parse().unwrap_or(0);
+        let year = 2000 + yy;
+        let is_leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+        if !is_leap {
+            warn!("[MT940] fixing invalid date 20{:02}-02-29 → 02-28 in :61: line", yy);
+            line.replace_range(8..10, "28");
+        }
+    }
+}
+
 fn rewrap_tag86(content: &str, out: &mut Vec<String>) {
     let mut lines_emitted = 0u32;
     let mut pos = 0;
@@ -820,6 +834,13 @@ fn parse_mt940(data: &[u8], status: TransactionStatus) -> Result<Vec<Transaction
     }
     if let Some(buf) = tag86_buf.take() {
         rewrap_tag86(&buf, &mut rewrapped);
+    }
+    // Fix invalid Feb 29 dates in :61: lines. MT940 uses YYMMDD and
+    // some banks emit Feb 29 in non-leap years.
+    for line in &mut rewrapped {
+        if line.starts_with(":61:") && line.len() >= 10 {
+            fix_invalid_feb29(line);
+        }
     }
     let cleaned = rewrapped.join("\r\n") + "\r\n";
 
