@@ -787,6 +787,15 @@ fn parse_mt940(data: &[u8], status: TransactionStatus) -> Result<Vec<Transaction
         info!("[MT940] first 200 chars: {:?}", &cleaned[..200]);
     }
 
+    if let Ok(dump_dir) = std::env::var("FINTS_DUMP_DIR") {
+        let path = format!("{}/mt940_{:?}_{}.txt", dump_dir, status, data.len());
+        if let Err(e) = std::fs::write(&path, &cleaned) {
+            warn!("[MT940] failed to dump to {}: {}", path, e);
+        } else {
+            info!("[MT940] dumped cleaned text to {}", path);
+        }
+    }
+
     let sanitized = mt940::sanitizers::to_swift_charset(&cleaned);
     let messages = mt940::parse_mt940(&sanitized)
         .map_err(|e| FinTSError::Mt940(format!("MT940 parse error: {}", e)))?;
