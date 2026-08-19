@@ -768,6 +768,22 @@ pub fn bank_ops_with_config(config: BankConfig) -> AnyBank {
 // MT940 parsing
 // ═══════════════════════════════════════════════════════════════════════════════
 
+fn rewrap_tag86(content: &str, out: &mut Vec<String>) {
+    let mut lines_emitted = 0u32;
+    let mut pos = 0;
+    while pos < content.len() && lines_emitted < 6 {
+        let end = (pos + 65).min(content.len());
+        let chunk = &content[pos..end];
+        if lines_emitted == 0 {
+            out.push(format!(":86:{chunk}"));
+        } else {
+            out.push(chunk.to_string());
+        }
+        lines_emitted += 1;
+        pos = end;
+    }
+}
+
 fn parse_mt940(data: &[u8], status: TransactionStatus) -> Result<Vec<Transaction>> {
     if data.is_empty() { return Ok(Vec::new()); }
 
@@ -779,29 +795,33 @@ fn parse_mt940(data: &[u8], status: TransactionStatus) -> Result<Vec<Transaction
         .filter(|l| { let t = l.trim(); !t.is_empty() && t != "-" && t != "--" })
         .collect();
 
-    // The mt940 crate's Pest grammar limits :86: fields to 6 lines.
-    // German banks using DFÜ ?XX subfields sometimes send 7+ lines
-    // (e.g. when ?60 ABWA is present). Merge excess continuation lines
-    // into the 6th line so the parser accepts them.
-    let mut merged: Vec<String> = Vec::with_capacity(filtered.len());
-    let mut tag86_lines = 0u32;
+    // The mt940 crate's Pest grammar limits :86: fields to 6 lines of
+    // 65 chars each. German banks using DFÜ ?XX subfields sometimes
+    // exceed this (7+ lines when ?60 ABWA is present). Collect each
+    // :86: field's full text and re-wrap to fit the grammar.
+    let mut rewrapped: Vec<String> = Vec::with_capacity(filtered.len());
+    let mut tag86_buf: Option<String> = None;
     for line in &filtered {
         let is_tag = line.starts_with(':') && line.len() > 3 && line[1..].contains(':');
         if is_tag {
-            tag86_lines = if line.starts_with(":86:") { 1 } else { 0 };
-            merged.push(line.to_string());
-        } else if tag86_lines > 0 {
-            tag86_lines += 1;
-            if tag86_lines <= 6 {
-                merged.push(line.to_string());
-            } else if let Some(last) = merged.last_mut() {
-                last.push_str(line);
+            if let Some(buf) = tag86_buf.take() {
+                rewrap_tag86(&buf, &mut rewrapped);
             }
+            if line.starts_with(":86:") {
+                tag86_buf = Some(line[4..].to_string());
+            } else {
+                rewrapped.push(line.to_string());
+            }
+        } else if let Some(ref mut buf) = tag86_buf {
+            buf.push_str(line);
         } else {
-            merged.push(line.to_string());
+            rewrapped.push(line.to_string());
         }
     }
-    let cleaned = merged.join("\r\n") + "\r\n";
+    if let Some(buf) = tag86_buf.take() {
+        rewrap_tag86(&buf, &mut rewrapped);
+    }
+    let cleaned = rewrapped.join("\r\n") + "\r\n";
 
     info!("[MT940] input: {} bytes, decoded: {} chars, cleaned: {} chars",
         data.len(), mt940_text.len(), cleaned.len());
