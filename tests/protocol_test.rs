@@ -409,8 +409,11 @@ fn test_fetch_result_includes_holdings() {
         balance: None,
         transactions: vec![],
         holdings: vec![],
+        raw_booked: fints::Mt940Data::new(),
+        raw_pending: fints::Mt940Data::new(),
     };
     assert!(result.holdings.is_empty());
+    assert!(result.raw_booked.is_empty());
 }
 
 #[test]

@@ -48,6 +48,12 @@ pub struct FetchResult {
     pub balance: Option<AccountBalance>,
     pub transactions: Vec<Transaction>,
     pub holdings: Vec<SecurityHolding>,
+    /// Concatenated HIKAZ DEG1 pages: raw booked transactions in MT940
+    /// format, Windows-1252 encoded. Always populated.
+    pub raw_booked: Mt940Data,
+    /// Concatenated HIKAZ DEG2 pages: raw pending transactions, which banks
+    /// deliver in MT942 format, Windows-1252 encoded. Always populated.
+    pub raw_pending: Mt940Data,
 }
 
 /// Options controlling what data to fetch in a single authenticated dialog.
@@ -65,6 +71,10 @@ pub struct FetchOpts {
     pub credit_card_number: Option<String>,
     /// Days of transaction history to fetch. Default: 90.
     pub days: u32,
+    /// Skip internal MT940/MT942 parsing of HIKAZ data; consumers parse
+    /// `raw_booked`/`raw_pending` themselves. DKKKU credit-card transactions
+    /// are unaffected (separate, non-MT940 format). Default: false.
+    pub skip_parsing: bool,
 }
 
 impl FetchOpts {
@@ -379,7 +389,13 @@ impl BankOps for Dkb {
             }
         };
 
-        Ok(FetchResult { balance, transactions, holdings })
+        Ok(FetchResult {
+            balance,
+            transactions,
+            holdings,
+            raw_booked: all_booked,
+            raw_pending: all_pending,
+        })
     }
 
     async fn fetch_holdings(
@@ -638,11 +654,11 @@ impl AnyBank {
         };
 
         // ── Transactions ──
-        let mut transactions = if opts.transactions {
+        let mut all_booked = Mt940Data::new();
+        let mut all_pending = Mt940Data::new();
+        if opts.transactions {
             let end_date = chrono::Utc::now().date_naive();
             let start_date = end_date - chrono::Duration::days(opts.days.max(1) as i64);
-            let mut all_booked = Mt940Data::new();
-            let mut all_pending = Mt940Data::new();
             let mut td: Option<TouchdownPoint> = None;
             loop {
                 match dialog.transactions(account, start_date, end_date, td.as_ref()).await? {
@@ -663,6 +679,8 @@ impl AnyBank {
                     }
                 }
             }
+        }
+        let mut transactions = if opts.transactions && !opts.skip_parsing {
             let mut txns = match parse_mt940(all_booked.as_bytes(), TransactionStatus::Booked) {
                 Ok(t) => t,
                 Err(e) => {
@@ -722,7 +740,13 @@ impl AnyBank {
             }
         }
 
-        Ok(FetchResult { balance, transactions, holdings })
+        Ok(FetchResult {
+            balance,
+            transactions,
+            holdings,
+            raw_booked: all_booked,
+            raw_pending: all_pending,
+        })
     }
 }
 
