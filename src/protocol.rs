@@ -1289,6 +1289,28 @@ impl Dialog<Open> {
         }))
     }
 
+    /// Send a raw segment (pre-built DEGs) and return the full response.
+    /// Useful for reverse-engineering undocumented bank-proprietary segments.
+    pub async fn send_raw(&mut self, degs: Vec<crate::parser::DEG>) -> Result<Response> {
+        let msg_bytes = message::build_raw_message(
+            &self.dialog_id, self.message_number,
+            &self.blz, &self.user_id, &self.system_id, &self.pin,
+            &self.params.selected_security_function,
+            vec![degs],
+        )?;
+
+        let msg_str = String::from_utf8_lossy(&msg_bytes);
+        let redacted = msg_str.replace(self.pin.as_str(), "***PIN***");
+        info!("[FinTS] Outgoing ({} bytes): {}", msg_bytes.len(), &redacted[..redacted.len().min(500)]);
+
+        self.message_number += 1;
+        let response_bytes = self.connection.send(&msg_bytes).await?;
+        let response_str = String::from_utf8_lossy(&response_bytes);
+        let preview: String = response_str.chars().take(500).collect();
+        info!("[FinTS] Incoming ({} bytes): {}", response_bytes.len(), preview);
+        parse_response(&response_bytes, self.message_number - 1)
+    }
+
     /// Poll decoupled TAN status from an Open dialog. Used when a business
     /// operation (balance/transactions/holdings) returns `NeedTan` — the dialog
     /// stays `Open` (unlike the `Dialog<TanPending>` flow during initiation).

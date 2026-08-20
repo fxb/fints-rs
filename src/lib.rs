@@ -49,7 +49,7 @@ pub mod banks;
 pub mod banks_generated;
 pub mod error;
 pub(crate) mod message;
-pub(crate) mod parser;
+pub mod parser;
 pub(crate) mod segments;
 pub(crate) mod serializer;
 pub(crate) mod transport;

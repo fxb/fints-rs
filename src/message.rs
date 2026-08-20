@@ -187,6 +187,31 @@ pub(crate) fn build_message_from_typed_with_tan(
     build_from_segments(&ctx, segments, params)
 }
 
+/// Build a message from pre-built raw DEGs (no typed Segment conversion).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_raw_message(
+    dialog_id: &DialogId,
+    message_number: u16,
+    blz: &Blz,
+    user_id: &UserId,
+    system_id: &SystemId,
+    pin: &Pin,
+    security_function: &SecurityFunction,
+    business_segments: Vec<Vec<crate::parser::DEG>>,
+) -> Result<Vec<u8>, FinTSError> {
+    let ctx = SecurityContext {
+        dialog_id: dialog_id.as_str(),
+        message_number,
+        blz: blz.as_str(),
+        user_id: user_id.as_str(),
+        system_id: system_id.as_str(),
+        pin: pin.as_str(),
+        tan: None,
+        security_function: security_function.as_str(),
+    };
+    build_message_raw(&ctx, business_segments)
+}
+
 /// Build a dialog-end message.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_end_message(
