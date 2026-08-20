@@ -82,6 +82,7 @@ pub(crate) fn seg_header(seg_type: &str, number: u16, version: u16) -> DEG {
 }
 
 /// Create a segment header with reference: `TYPE:NUMBER:VERSION:REFERENCE`
+#[allow(dead_code)]
 pub(crate) fn seg_header_ref(seg_type: &str, number: u16, version: u16, reference: u16) -> DEG {
     deg(vec![
         de_text(seg_type),
@@ -435,6 +436,7 @@ pub(crate) fn hktan_process_s(
 
 /// Build HKTAB to request the list of registered TAN media (devices).
 /// Returns HITAB response with device names needed for pushTAN.
+#[allow(dead_code)]
 pub(crate) fn hktab(segment_number: u16, version: u16) -> Vec<DEG> {
     vec![
         seg_header("HKTAB", segment_number, version),
@@ -445,6 +447,7 @@ pub(crate) fn hktab(segment_number: u16, version: u16) -> Vec<DEG> {
 
 // ---- HKSPA (SEPA-Kontoverbindung anfordern) - SEPA Account Info, version 1-3 ----
 
+#[allow(dead_code)]
 pub(crate) fn hkspa(segment_number: u16, version: u16) -> Vec<DEG> {
     vec![seg_header("HKSPA", segment_number, version)]
 }
@@ -613,6 +616,66 @@ pub(crate) fn hkwpd(
     // Touchdown point (optional)
     if let Some(td) = touchdown {
         degs.push(deg1(de_text(td)));
+    }
+
+    degs
+}
+
+// ---- HKWDU (Wertpapier-Depotumsätze) - Securities Depot Transactions, version 1-5 ----
+
+/// Build HKWDU to request depot transactions for a securities account.
+/// HKWDU returns HIWDU response with depot transactions in MT536 format.
+///
+/// FinTS spec structure (v4, KTV2):
+///   DEG0 = header (HKWDU:seg_num:version)
+///   DEG1 = depot account (national: Depotnummer::280:BLZ)
+///   DEG2 = all depots flag (JN, default "N")
+///   DEG3 = WPRef filter (optional, empty = all securities)
+///   DEG4 = start date
+///   DEG5 = end date
+///   DEG6 = max entries (optional)
+///   DEG7 = touchdown point (optional, for pagination)
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn hkwdu(
+    segment_number: u16,
+    version: u16,
+    iban: &str,
+    bic: &str,
+    national: Option<(&str, &str)>,
+    start_date: Option<NaiveDate>,
+    end_date: Option<NaiveDate>,
+    touchdown: Option<&str>,
+) -> Vec<DEG> {
+    let mut degs = if version >= 5 {
+        // Version 5: international account format (KTV3 / KTI)
+        vec![
+            seg_header("HKWDU", segment_number, version),
+            Kti::new(iban, bic).to_deg(),
+        ]
+    } else {
+        // Versions 1-4: national account format (Depotnummer + BLZ)
+        let (account_number, blz) = national_identity(iban, national);
+        vec![
+            seg_header("HKWDU", segment_number, version),
+            deg(vec![
+                de_text(&account_number),
+                de_empty(),
+                de_text("280"),
+                de_text(&blz),
+            ]),
+        ]
+    };
+
+    // Only include optional trailing DEGs when dates or touchdown are provided.
+    if start_date.is_some() || end_date.is_some() || touchdown.is_some() {
+        degs.push(deg1(de_text("N")));
+        degs.push(deg1(de_empty()));
+        degs.push(deg1(if let Some(d) = start_date { de_date(d) } else { de_empty() }));
+        degs.push(deg1(if let Some(d) = end_date { de_date(d) } else { de_empty() }));
+        degs.push(deg1(de_empty()));
+        if let Some(td) = touchdown {
+            degs.push(deg1(de_text(td)));
+        }
     }
 
     degs

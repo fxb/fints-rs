@@ -409,6 +409,7 @@ fn test_fetch_result_includes_holdings() {
         balance: None,
         transactions: vec![],
         holdings: vec![],
+        depot_transactions: vec![],
         raw_booked: fints::Mt940Data::new(),
         raw_pending: fints::Mt940Data::new(),
     };

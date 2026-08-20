@@ -5,4 +5,5 @@
 
 pub mod builder;
 pub mod mt535;
+pub mod mt536;
 pub mod response;

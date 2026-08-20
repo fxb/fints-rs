@@ -15,7 +15,7 @@ use crate::serializer;
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Security context for message construction.
-struct SecurityContext<'a> {
+pub(crate) struct SecurityContext<'a> {
     dialog_id: &'a str,
     message_number: u16,
     blz: &'a str,
@@ -135,6 +135,7 @@ fn build_message_raw(
 use crate::types::{Blz, DialogId, Pin, SecurityFunction, SystemId, UserId};
 
 /// Build a message from typed segments (no TAN).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_message_from_typed(
     dialog_id: &DialogId,
     message_number: u16,
@@ -160,6 +161,7 @@ pub(crate) fn build_message_from_typed(
 }
 
 /// Build a message from typed segments WITH a TAN value.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_message_from_typed_with_tan(
     dialog_id: &DialogId,
     message_number: u16,
@@ -186,6 +188,7 @@ pub(crate) fn build_message_from_typed_with_tan(
 }
 
 /// Build a dialog-end message.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_end_message(
     dialog_id: &DialogId,
     message_number: u16,
@@ -217,7 +220,7 @@ pub(crate) fn build_end_message(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Build a message from raw DEGs. Used only by unit tests.
-#[allow(dead_code)]
+#[allow(dead_code, clippy::too_many_arguments)]
 pub(crate) fn build_message(
     dialog_id: &str,
     message_number: u16,

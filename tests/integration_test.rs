@@ -104,8 +104,8 @@ async fn test_sync_dialog() {
     // HIPINS: should know which ops need TAN
     assert!(!synced.bank_params().operation_tan_required.is_empty(), "HIPINS should be parsed");
     // Mock says HKSAL:N, HKKAZ:N — no TAN required
-    assert_eq!(synced.bank_params().needs_tan(&SegmentType::new("HKSAL")), false, "HKSAL should not need TAN");
-    assert_eq!(synced.bank_params().needs_tan(&SegmentType::new("HKKAZ")), false, "HKKAZ should not need TAN");
+    assert!(!synced.bank_params().needs_tan(&SegmentType::new("HKSAL")), "HKSAL should not need TAN");
+    assert!(!synced.bank_params().needs_tan(&SegmentType::new("HKKAZ")), "HKKAZ should not need TAN");
 
     // Response should have success code
     assert!(response.all_codes().any(|c| c.is_success()), "Should have success code");
@@ -286,10 +286,10 @@ async fn test_hipins_parsed() {
 
     // Mock HIPINS has HKSPA:N, HKKAZ:N, HKSAL:N, HKTAN:N
     assert!(!params.operation_tan_required.is_empty(), "HIPINS should be parsed");
-    assert_eq!(params.needs_tan(&SegmentType::new("HKSAL")), false);
-    assert_eq!(params.needs_tan(&SegmentType::new("HKKAZ")), false);
-    assert_eq!(params.needs_tan(&SegmentType::new("HKSPA")), false);
-    assert_eq!(params.needs_tan(&SegmentType::new("HKCCS")), true);
+    assert!(!params.needs_tan(&SegmentType::new("HKSAL")));
+    assert!(!params.needs_tan(&SegmentType::new("HKKAZ")));
+    assert!(!params.needs_tan(&SegmentType::new("HKSPA")));
+    assert!(params.needs_tan(&SegmentType::new("HKCCS")));
 
     synced.end().await.ok();
 }

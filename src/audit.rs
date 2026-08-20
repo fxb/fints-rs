@@ -554,6 +554,7 @@ mod tests {
     use super::*;
 
     /// Minimal valid outer wrapper without inner segments.
+    #[allow(dead_code)]
     fn minimal_outer(inner_payload: &[u8]) -> Vec<u8> {
         // HNHBK with size ~100, version 300, dialog 0, msg 1
         // HNVSK at seg 998

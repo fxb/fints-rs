@@ -143,6 +143,7 @@ pub(crate) fn parse_hitan(seg: &RawSegment) -> (String, String, Option<Vec<u8>>)
 /// Parse HITAB (TAN media list response).
 /// Returns a list of TAN medium names (e.g. "Handy-Nr. +49 151 xxx", "Authenticator App").
 /// These are the registered devices/channels that can receive pushTAN notifications.
+#[allow(dead_code)]
 pub(crate) fn parse_hitab(seg: &RawSegment) -> Vec<String> {
     let mut media = Vec::new();
 
@@ -169,6 +170,7 @@ pub(crate) fn parse_hitab(seg: &RawSegment) -> Vec<String> {
 }
 
 /// Parse HISPA (SEPA account information response).
+#[allow(dead_code)]
 pub(crate) fn parse_hispa(seg: &RawSegment) -> Vec<SepaAccount> {
     let mut accounts = Vec::new();
 
@@ -335,7 +337,7 @@ pub(crate) fn parse_hisal(seg: &RawSegment) -> Option<AccountBalance> {
     // Credit line (DEG 6)
     let credit_line = {
         let cl_deg = seg.deg(balance_deg_idx + 2);
-        if cl_deg.len() >= 1 {
+        if !cl_deg.is_empty() {
             let cl_str = cl_deg.get_str(0).replace(',', ".");
             Decimal::from_str(&cl_str).ok()
         } else {
@@ -346,7 +348,7 @@ pub(crate) fn parse_hisal(seg: &RawSegment) -> Option<AccountBalance> {
     // Available amount (DEG 7)
     let available = {
         let av_deg = seg.deg(balance_deg_idx + 3);
-        if av_deg.len() >= 1 {
+        if !av_deg.is_empty() {
             let av_str = av_deg.get_str(0).replace(',', ".");
             Decimal::from_str(&av_str).ok()
         } else {
@@ -464,6 +466,27 @@ pub(crate) fn parse_hiwpd(segments: &[RawSegment]) -> Vec<SecurityHolding> {
     holdings
 }
 
+/// Parse HIWDU (securities depot transactions) segments into depot transactions.
+///
+/// HIWDU carries depot transactions as an MT536 binary blob. This mirrors the
+/// HIWPD parser but delegates to the MT536 parser instead of MT535.
+pub(crate) fn parse_hiwdu(segments: &[RawSegment]) -> Vec<crate::types::DepotTransaction> {
+    let mut transactions = Vec::new();
+
+    for seg in segments {
+        if seg.segment_type() != "HIWDU" {
+            continue;
+        }
+        for i in 1..seg.deg_count() {
+            if let Some(blob) = read_binary(seg, i, 0) {
+                transactions.extend(super::mt536::parse_mt536(&blob));
+            }
+        }
+    }
+
+    transactions
+}
+
 /// Parse a single holding position from a DEG.
 /// Uses heuristic detection since HIWPD layout varies between banks and versions.
 fn parse_holding_deg(d: &crate::parser::DEG) -> Option<SecurityHolding> {
@@ -569,7 +592,7 @@ fn parse_holding_deg(d: &crate::parser::DEG) -> Option<SecurityHolding> {
     if isin.is_none() && wkn.is_none() {
         return None;
     }
-    let quantity = quantity.unwrap_or_else(|| Decimal::ZERO);
+    let quantity = quantity.unwrap_or(Decimal::ZERO);
 
     // Compute market value from quantity * price if not explicitly given
     if market_value.is_none() {
@@ -681,6 +704,7 @@ pub(crate) fn find_touchdown(codes: &[ResponseCode]) -> Option<TouchdownPoint> {
 }
 
 /// Check response codes for errors and return the first error found.
+#[allow(dead_code)]
 pub(crate) fn find_error(codes: &[ResponseCode]) -> Option<&ResponseCode> {
     codes.iter().find(|c| c.is_error())
 }

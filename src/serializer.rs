@@ -102,6 +102,7 @@ pub fn serialize_segment(degs: &[DEG]) -> Result<Vec<u8>, FinTSError> {
 }
 
 /// Serialize a list of segments into a complete FinTS message.
+#[allow(dead_code)]
 pub fn serialize_message(segments: &[Vec<DEG>]) -> Result<Vec<u8>, FinTSError> {
     let mut out = Vec::new();
     for seg_degs in segments {

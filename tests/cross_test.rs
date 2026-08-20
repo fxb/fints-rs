@@ -4,9 +4,8 @@
 //! against it and verify the output.
 
 use assert_cmd::Command;
-use predicates::prelude::*;
 #[allow(unused_imports)]
-use tempfile;
+use predicates::prelude::*;
 
 struct TestServer {
     port: u16,

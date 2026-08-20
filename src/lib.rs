@@ -86,12 +86,13 @@ pub use protocol::{
     BalanceResult, TransactionResult, TransactionPage,
     CreditCardTransactionResult, CreditCardTransactionPage,
     HoldingsResult, HoldingsPage,
+    DepotTransactionResult, DepotTransactionPage,
 };
 
 // Domain types
 pub use types::{
     AccountBalance, SepaAccount, Transaction, TransactionStatus, TanMethod,
-    SecurityHolding, Isin, Wkn,
+    SecurityHolding, DepotTransaction, DepotTransactionDirection, Isin, Wkn,
     Blz, UserId, Pin, SystemId, ProductId, DialogId, SecurityFunction,
     TaskReference, SegmentType, TanMediumName, TouchdownPoint, SegmentRef,
     Currency, Iban, Bic, TanProcess, ResponseCodeKind, ResponseCode,

@@ -48,6 +48,9 @@ pub struct FetchResult {
     pub balance: Option<AccountBalance>,
     pub transactions: Vec<Transaction>,
     pub holdings: Vec<SecurityHolding>,
+    /// Parsed depot transactions from HIWDU/MT536. Empty unless depot
+    /// transactions were requested.
+    pub depot_transactions: Vec<DepotTransaction>,
     /// Concatenated HIKAZ DEG1 pages: raw booked transactions in MT940
     /// format, Windows-1252 encoded. Always populated.
     pub raw_booked: Mt940Data,
@@ -65,6 +68,8 @@ pub struct FetchOpts {
     pub transactions: bool,
     /// Fetch securities holdings (HKWPD). Default: true.
     pub holdings: bool,
+    /// Fetch depot transactions (HKWDU). For securities/depot accounts.
+    pub depot_transactions: bool,
     /// Fetch credit card transactions (DKKKU). Requires `credit_card_number`.
     pub credit_card: bool,
     /// Credit card number (PAN) for DKKKU requests.
@@ -132,6 +137,15 @@ pub trait BankOps: Send + Sync {
         dialog: &mut Dialog<Open>,
         account: &Account,
     ) -> impl std::future::Future<Output = Result<Vec<SecurityHolding>>> + Send;
+
+    /// Fetch depot transactions (HKWDU) from an open dialog.
+    /// Returns an empty Vec if the bank does not support HKWDU.
+    fn fetch_depot_transactions(
+        &self,
+        dialog: &mut Dialog<Open>,
+        account: &Account,
+        days: u32,
+    ) -> impl std::future::Future<Output = Result<Vec<DepotTransaction>>> + Send;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -226,6 +240,12 @@ async fn try_resume_init(
 /// ```
 pub struct Dkb {
     bank: BankConfig,
+}
+
+impl Default for Dkb {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Dkb {
@@ -393,6 +413,7 @@ impl BankOps for Dkb {
             balance,
             transactions,
             holdings,
+            depot_transactions: Vec::new(),
             raw_booked: all_booked,
             raw_pending: all_pending,
         })
@@ -434,6 +455,47 @@ impl BankOps for Dkb {
 
         info!("[DKB] Total: {} holdings", all_holdings.len());
         Ok(all_holdings)
+    }
+
+    async fn fetch_depot_transactions(
+        &self,
+        dialog: &mut Dialog<Open>,
+        account: &Account,
+        days: u32,
+    ) -> Result<Vec<DepotTransaction>> {
+        info!("[DKB] Fetching depot transactions IBAN={}, BIC={}", account.iban(), account.bic());
+
+        let end_date = chrono::Utc::now().date_naive();
+        let start_date = end_date - chrono::Duration::days(days.max(1) as i64);
+        let mut all_txns = Vec::new();
+        let mut touchdown: Option<TouchdownPoint> = None;
+
+        loop {
+            let result = dialog.depot_transactions(
+                account, start_date, end_date, touchdown.as_ref(),
+            ).await?;
+
+            match result {
+                DepotTransactionResult::NeedTan(_) => {
+                    warn!("[DKB] Depot transactions requires additional TAN — skipping");
+                    return Ok(all_txns);
+                }
+                DepotTransactionResult::Empty => {
+                    info!("[DKB] No depot transactions");
+                    break;
+                }
+                DepotTransactionResult::Success(page) => {
+                    info!("[DKB] Got {} depot transactions", page.transactions.len());
+                    all_txns.extend(page.transactions);
+                    touchdown = page.touchdown;
+                    if touchdown.is_none() { break; }
+                    info!("[DKB] Depot transactions touchdown: more data...");
+                }
+            }
+        }
+
+        info!("[DKB] Total: {} depot transactions", all_txns.len());
+        Ok(all_txns)
     }
 }
 
@@ -530,6 +592,10 @@ impl BankOps for GenericBank {
     async fn fetch_holdings(&self, dialog: &mut Dialog<Open>, account: &Account) -> Result<Vec<SecurityHolding>> {
         Dkb::new().fetch_holdings(dialog, account).await
     }
+
+    async fn fetch_depot_transactions(&self, dialog: &mut Dialog<Open>, account: &Account, days: u32) -> Result<Vec<DepotTransaction>> {
+        Dkb::new().fetch_depot_transactions(dialog, account, days).await
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -588,6 +654,18 @@ impl AnyBank {
         match self {
             AnyBank::Dkb(b) => b.fetch_holdings(dialog, account).await,
             AnyBank::Generic(b) => b.fetch_holdings(dialog, account).await,
+        }
+    }
+
+    pub async fn fetch_depot_transactions(
+        &self,
+        dialog: &mut Dialog<Open>,
+        account: &Account,
+        days: u32,
+    ) -> Result<Vec<DepotTransaction>> {
+        match self {
+            AnyBank::Dkb(b) => b.fetch_depot_transactions(dialog, account, days).await,
+            AnyBank::Generic(b) => b.fetch_depot_transactions(dialog, account, days).await,
         }
     }
 
@@ -740,10 +818,21 @@ impl AnyBank {
             }
         }
 
+        // ── Depot transactions (HKWDU) ──
+        let depot_transactions = if opts.depot_transactions {
+            match self.fetch_depot_transactions(dialog, account, opts.days).await {
+                Ok(t) => t,
+                Err(e) => { warn!("Depot transactions fetch failed: {}", e); Vec::new() }
+            }
+        } else {
+            Vec::new()
+        };
+
         Ok(FetchResult {
             balance,
             transactions,
             holdings,
+            depot_transactions,
             raw_booked: all_booked,
             raw_pending: all_pending,
         })
@@ -798,7 +887,7 @@ fn fix_invalid_feb29(line: &mut String) {
     if line.len() >= 10 && &line[8..10] == "29" && &line[6..8] == "02" {
         let yy: u32 = line[4..6].parse().unwrap_or(0);
         let year = 2000 + yy;
-        let is_leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+        let is_leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
         if !is_leap {
             warn!("[MT940] fixing invalid date 20{:02}-02-29 → 02-28 in :61: line", yy);
             line.replace_range(8..10, "28");
@@ -845,8 +934,8 @@ fn parse_mt940(data: &[u8], status: TransactionStatus) -> Result<Vec<Transaction
             if let Some(buf) = tag86_buf.take() {
                 rewrap_tag86(&buf, &mut rewrapped);
             }
-            if line.starts_with(":86:") {
-                tag86_buf = Some(line[4..].to_string());
+            if let Some(rest) = line.strip_prefix(":86:") {
+                tag86_buf = Some(rest.to_string());
             } else {
                 rewrapped.push(line.to_string());
             }
@@ -926,8 +1015,8 @@ fn parse_mt940(data: &[u8], status: TransactionStatus) -> Result<Vec<Transaction
                 amount,
                 currency: Currency::new(&msg.opening_balance.iso_currency_code),
                 applicant_name,
-                applicant_iban: applicant_iban.map(|s| Iban::new(s)),
-                applicant_bic: applicant_bic.map(|s| Bic::new(s)),
+                applicant_iban: applicant_iban.map(Iban::new),
+                applicant_bic: applicant_bic.map(Bic::new),
                 purpose, posting_text,
                 reference: Some(line.customer_ref.clone()),
                 raw, status: status.clone(),

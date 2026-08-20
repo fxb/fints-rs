@@ -79,6 +79,12 @@ pub struct HhdUcData(pub Vec<u8>);
 #[derive(Debug, Clone)]
 pub struct Mt940Data(pub Vec<u8>);
 
+impl Default for Mt940Data {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Mt940Data {
     pub fn new() -> Self {
         Self(Vec::new())
@@ -218,6 +224,7 @@ pub enum ResponseCodeKind {
 }
 
 impl ResponseCodeKind {
+    #[allow(dead_code)]
     fn default_unknown() -> Self {
         Self::Unknown(String::new())
     }
@@ -237,7 +244,7 @@ impl ResponseCodeKind {
             "3920" => Self::AllowedSecurityFunctions(
                 parameters
                     .iter()
-                    .map(|s| SecurityFunction::new(s))
+                    .map(SecurityFunction::new)
                     .collect(),
             ),
             "3955" => Self::DecoupledInitiated,
@@ -345,6 +352,7 @@ pub(crate) fn read_opt_str(seg: &RawSegment, deg: usize, de: usize) -> Option<St
 }
 
 /// Read an integer from a DE.
+#[allow(dead_code)]
 pub(crate) fn read_int(seg: &RawSegment, deg: usize, de: usize) -> i64 {
     seg.deg(deg)
         .get(de)
@@ -363,6 +371,7 @@ pub(crate) fn read_u16(seg: &RawSegment, deg: usize, de: usize) -> u16 {
 }
 
 /// Read a FinTS date (YYYYMMDD format) from a DE.
+#[allow(dead_code)]
 pub(crate) fn read_date(seg: &RawSegment, deg: usize, de: usize) -> Option<NaiveDate> {
     let s = seg.deg(deg).get(de).as_text();
     if s.len() == 8 {
@@ -373,6 +382,7 @@ pub(crate) fn read_date(seg: &RawSegment, deg: usize, de: usize) -> Option<Naive
 }
 
 /// Read a FinTS amount (comma as decimal separator) from a DE.
+#[allow(dead_code)]
 pub(crate) fn read_amount(seg: &RawSegment, deg: usize, de: usize) -> Option<Decimal> {
     let s = seg.deg(deg).get(de).as_text();
     if s.is_empty() {
@@ -388,6 +398,7 @@ pub(crate) fn read_binary(seg: &RawSegment, deg: usize, de: usize) -> Option<Vec
 }
 
 /// Read a boolean (J/N) from a DE.
+#[allow(dead_code)]
 pub(crate) fn read_bool(seg: &RawSegment, deg: usize, de: usize) -> bool {
     seg.deg(deg).get(de).as_text() == "J"
 }
@@ -659,6 +670,32 @@ pub struct SecurityHolding {
     pub depot_id: Option<String>,
     /// Raw parsed data for debugging/extension.
     pub raw: serde_json::Value,
+}
+
+/// Direction of a depot transaction (buy/sell/transfer).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DepotTransactionDirection {
+    /// RECE — securities received (buy, inbound transfer).
+    Receive,
+    /// DELI — securities delivered (sell, outbound transfer).
+    Deliver,
+    Unknown,
+}
+
+/// A single depot transaction parsed from MT536.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DepotTransaction {
+    pub isin: Option<Isin>,
+    pub wkn: Option<Wkn>,
+    pub name: String,
+    pub quantity: Decimal,
+    pub amount: Option<Decimal>,
+    pub currency: Option<Currency>,
+    pub direction: DepotTransactionDirection,
+    pub effective_date: Option<NaiveDate>,
+    pub settlement_date: Option<NaiveDate>,
+    pub is_reversal: bool,
+    pub details: Option<String>,
 }
 
 /// A parsed transaction.

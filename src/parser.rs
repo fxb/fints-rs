@@ -55,6 +55,7 @@ impl DataElement {
 
 /// A Data Element Group: a list of data elements (colon-separated in wire format).
 /// If the DEG contains only one element, it's still stored as a Vec of length 1.
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DEG(pub Vec<DataElement>);
 

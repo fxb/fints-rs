@@ -98,6 +98,13 @@ pub(crate) enum Segment {
         currency: Option<Currency>,
         touchdown: Option<TouchdownPoint>,
     },
+    /// HKWDU: Wertpapier-Depotumsätze (securities depot transactions request)
+    DepotTransactions {
+        account: Account,
+        start_date: Option<NaiveDate>,
+        end_date: Option<NaiveDate>,
+        touchdown: Option<TouchdownPoint>,
+    },
     /// DKKKU: Kreditkartenumsätze (credit card transactions, bank-proprietary)
     CreditCardTransactions {
         account: Account,
@@ -159,6 +166,11 @@ impl Segment {
                 require_iban(account, "HKWPD", version)?;
                 hkwpd(0, version, account.iban(), account.bic(), account.national_identity(), currency.as_ref().map(|c| c.as_str()), touchdown.as_ref().map(|t| t.as_str()))
             }
+            Segment::DepotTransactions { account, start_date, end_date, touchdown } => {
+                let version = params.supported_version("HIWDUS", 7).max(1);
+                require_iban(account, "HKWDU", version)?;
+                hkwdu(0, version, account.iban(), account.bic(), account.national_identity(), *start_date, *end_date, touchdown.as_ref().map(|t| t.as_str()))
+            }
             Segment::CreditCardTransactions { account, credit_card_number, start_date, touchdown } => {
                 dkkku(0, account.iban(), account.national_identity(), credit_card_number, *start_date, touchdown.as_ref().map(|t| t.as_str()))
             }
@@ -199,6 +211,7 @@ pub enum InitResult {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Result of `Dialog<Open>::send()`. Per the spec, three outcomes are possible.
+#[allow(clippy::large_enum_variant)]
 pub enum SendResult {
     /// 0020: Order executed. Response contains the result data (HISAL, HIKAZ, etc.).
     Success(Response),
@@ -360,6 +373,12 @@ pub struct BankParams {
     pub operation_tan_required: HashMap<SegmentType, bool>,
     pub allowed_security_functions: Vec<SecurityFunction>,
     pub preferred_security_function: Option<SecurityFunction>,
+}
+
+impl Default for BankParams {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BankParams {
@@ -961,6 +980,21 @@ pub enum HoldingsResult {
     Empty,
 }
 
+/// Result of a single depot transactions request page.
+pub struct DepotTransactionPage {
+    /// Parsed depot transactions.
+    pub transactions: Vec<DepotTransaction>,
+    /// If Some, more data is available — call `depot_transactions()` again with this value.
+    pub touchdown: Option<TouchdownPoint>,
+}
+
+/// Result of a depot transactions request.
+pub enum DepotTransactionResult {
+    Success(DepotTransactionPage),
+    NeedTan(TanChallenge),
+    Empty,
+}
+
 // ── Dialog<Open> ─────────────────────────────────────────────────────────────
 
 impl Dialog<Open> {
@@ -1139,6 +1173,69 @@ impl Dialog<Open> {
 
         Ok(HoldingsResult::Success(HoldingsPage {
             holdings,
+            touchdown: td,
+        }))
+    }
+
+    /// Request depot transactions (HKWDU) — single page.
+    ///
+    /// Returns parsed MT536 depot transactions. For pagination, pass the
+    /// `touchdown` from a previous `DepotTransactionPage`.
+    pub async fn depot_transactions(
+        &mut self,
+        account: &Account,
+        start_date: NaiveDate,
+        end_date: NaiveDate,
+        touchdown: Option<&TouchdownPoint>,
+    ) -> Result<DepotTransactionResult> {
+        let is_first = touchdown.is_none();
+        let hkwdu = SegmentType::new("HKWDU");
+        let needs_tan = self.params.needs_tan(&hkwdu);
+
+        let mut segments = vec![
+            Segment::DepotTransactions {
+                account: account.clone(),
+                start_date: Some(start_date),
+                end_date: Some(end_date),
+                touchdown: touchdown.cloned(),
+            },
+        ];
+
+        if needs_tan {
+            info!("[FinTS] depot transactions: HKWDU + HKTAN:4 (HIPINS: TAN required{})", if is_first { "" } else { ", touchdown" });
+            segments.push(Segment::TanProcess4 {
+                reference_seg: SegmentRef::new("HKWDU"),
+                tan_medium: self.params.selected_tan_medium.clone(),
+            });
+        } else if is_first {
+            info!("[FinTS] depot transactions: HKWDU (HIPINS: PIN-only)");
+        }
+
+        let response = self.send_segments(&segments).await?;
+
+        for c in response.all_codes() {
+            if c.is_error() || c.is_warning() {
+                info!("[FinTS] HKWDU: {} - {}", c.code(), c.text);
+            }
+        }
+
+        if response.needs_tan() && !response.has_sca_exemption() {
+            if let Some(challenge) = response.get_tan_challenge() {
+                return Ok(DepotTransactionResult::NeedTan(challenge));
+            }
+        }
+
+        response.check_errors()?;
+
+        let transactions = parse_hiwdu(&response.segments);
+        let td = response.touchdown();
+
+        if transactions.is_empty() && td.is_none() {
+            return Ok(DepotTransactionResult::Empty);
+        }
+
+        Ok(DepotTransactionResult::Success(DepotTransactionPage {
+            transactions,
             touchdown: td,
         }))
     }
