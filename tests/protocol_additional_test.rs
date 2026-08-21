@@ -52,7 +52,7 @@ fn test_response_code_all_known_codes() {
         ("9010", ResponseCodeKind::GeneralError),
         ("9040", ResponseCodeKind::AuthenticationMissing),
         ("9050", ResponseCodeKind::PartialErrors),
-        ("9110", ResponseCodeKind::UnexpectedInSync),
+        ("9110", ResponseCodeKind::InvalidStructure),
         ("9160", ResponseCodeKind::DataElementMissing),
         ("9340", ResponseCodeKind::PinWrong),
         ("9800", ResponseCodeKind::DialogAborted),

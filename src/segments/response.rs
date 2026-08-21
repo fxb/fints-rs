@@ -466,6 +466,27 @@ pub(crate) fn parse_hiwpd(segments: &[RawSegment]) -> Vec<SecurityHolding> {
     holdings
 }
 
+/// Parse DIWDH (Sparkassen Depot-Historie) response segments.
+///
+/// Live HASPA responses carry the historical position snapshot as the same
+/// binary SWIFT MT535 format used by the standard HIWPD holdings response.
+pub(crate) fn parse_diwdh(segments: &[RawSegment]) -> Vec<SecurityHolding> {
+    let mut holdings = Vec::new();
+
+    for seg in segments {
+        if seg.segment_type() != "DIWDH" {
+            continue;
+        }
+        for i in 1..seg.deg_count() {
+            if let Some(blob) = read_binary(seg, i, 0) {
+                holdings.extend(super::mt535::parse_mt535(&blob));
+            }
+        }
+    }
+
+    holdings
+}
+
 /// Parse HIWDU (securities depot transactions) segments into depot transactions.
 ///
 /// HIWDU carries depot transactions as an MT536 binary blob. This mirrors the
@@ -621,6 +642,9 @@ fn parse_holding_deg(d: &crate::parser::DEG) -> Option<SecurityHolding> {
         price,
         price_currency: price_currency.map(Currency::new),
         price_date,
+        acquisition_date: None,
+        acquisition_price: None,
+        acquisition_price_currency: None,
         market_value,
         market_value_currency: market_value_currency.map(Currency::new),
         acquisition_value: None,
@@ -1126,6 +1150,42 @@ mod tests {
         let seg = parse_segment("HIWPD:5:6:3+DE04120300001084174299:BYLADEM1001'");
         let holdings = parse_hiwpd(&[seg]);
         assert!(holdings.is_empty());
+    }
+
+    #[test]
+    fn test_parse_diwdh_mt535_snapshot() {
+        use crate::parser::{DataElement, DEG};
+
+        let payload = b":16R:GENL\r\n\
+:98A::STAT//20260820\r\n\
+:16S:GENL\r\n\
+:16R:FIN\r\n\
+:35B:ISIN DE000A41ED69\r\n\
+/DE/A41ED6\r\n\
+TBF SMART POWER\r\n\
+:90B::MRKT//ACTU/EUR50,39\r\n\
+:98C::PRIC//20260819204239\r\n\
+:93B::AGGR//UNIT/589,78\r\n\
+:19A::HOLD//EUR29719,01\r\n\
+:16S:FIN\r\n";
+        let segment = RawSegment {
+            degs: vec![
+                DEG(vec![
+                    DataElement::Text("DIWDH".to_string()),
+                    DataElement::Text("4".to_string()),
+                    DataElement::Text("1".to_string()),
+                    DataElement::Text("3".to_string()),
+                ]),
+                DEG(vec![DataElement::Binary(payload.to_vec())]),
+            ],
+        };
+
+        let holdings = parse_diwdh(&[segment]);
+        assert_eq!(holdings.len(), 1);
+        assert_eq!(holdings[0].isin.as_ref().unwrap().as_str(), "DE000A41ED69");
+        assert_eq!(holdings[0].wkn.as_ref().unwrap().as_str(), "A41ED6");
+        assert_eq!(holdings[0].quantity, rust_decimal::Decimal::new(58978, 2));
+        assert_eq!(holdings[0].market_value, Some(rust_decimal::Decimal::new(2971901, 2)));
     }
 
     #[test]

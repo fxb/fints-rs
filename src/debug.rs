@@ -3,7 +3,7 @@
 //! Used by both the CLI client and mock server for detailed logging.
 
 use crate::error::FinTSError;
-use crate::parser::{parse_message, DataElement};
+use crate::parser::{parse_message, DataElement, DEG};
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -105,6 +105,15 @@ pub fn decode_message(data: &[u8]) -> Result<DecodedMessage, FinTSError> {
         segment_codes,
         raw_bytes,
     })
+}
+
+/// Serialize one raw segment for protocol exploration.
+///
+/// This deliberately exposes only segment serialization, not message-envelope
+/// construction or credentials. Callers can therefore verify the exact DEG/DE
+/// layout that will be handed to [`Dialog::send_raw`](crate::Dialog::send_raw).
+pub fn serialize_raw_segment(degs: &[DEG]) -> Result<Vec<u8>, FinTSError> {
+    crate::serializer::serialize_segment(degs)
 }
 
 /// Produce a human-readable multi-line string for a [`DecodedMessage`].
@@ -325,5 +334,27 @@ mod tests {
         let msg = decode_message(data).expect("decode should succeed");
         assert_eq!(msg.segments[0].segment_reference, Some(3));
         assert_eq!(msg.segment_codes.len(), 1);
+    }
+
+    #[test]
+    fn test_serialize_raw_segment_preserves_compound_degs() {
+        let degs = vec![
+            DEG(vec![
+                DataElement::Text("DKWDH".to_string()),
+                DataElement::Text("3".to_string()),
+                DataElement::Text("1".to_string()),
+            ]),
+            DEG(vec![
+                DataElement::Text("1234567890".to_string()),
+                DataElement::Empty,
+                DataElement::Text("280".to_string()),
+                DataElement::Text("20050550".to_string()),
+            ]),
+            DEG(vec![DataElement::Text("730".to_string())]),
+        ];
+        assert_eq!(
+            serialize_raw_segment(&degs).expect("serialization should succeed"),
+            b"DKWDH:3:1+1234567890::280:20050550+730'"
+        );
     }
 }

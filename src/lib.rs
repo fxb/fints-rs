@@ -56,13 +56,13 @@ pub(crate) mod transport;
 pub mod types;
 
 // ── Tooling ──
-pub mod debug;
 pub mod audit;
+pub mod debug;
 
 // ── Architecture ──
+pub mod flow;
 pub mod protocol;
 pub mod workflow;
-pub mod flow;
 
 // ── Bank APIs ──
 pub mod dkb;
@@ -72,35 +72,36 @@ pub mod dkb;
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // Flow layer
-pub use flow::{Flow, ChallengeInfo, SyncResult, FetchOptions};
+pub use flow::{ChallengeInfo, FetchOptions, Flow, SyncResult};
 
 // Workflow layer
-pub use workflow::{BankOps, AnyBank, Dkb, GenericBank, bank_ops, bank_ops_with_config};
-pub use workflow::{InitiateOutcome, InitiateResult, InitiateNoTanResult, FetchResult, FetchOpts};
+pub use workflow::{bank_ops, bank_ops_with_config, AnyBank, BankOps, Dkb, GenericBank};
+pub use workflow::{FetchOpts, FetchResult, InitiateNoTanResult, InitiateOutcome, InitiateResult};
 
 // Protocol layer
 pub use protocol::{
-    Dialog, Response, TanChallenge, BankParams, Account,
-    New, Synced, Open, TanPending,
-    InitResult, SendResult, PollResult,
-    BalanceResult, TransactionResult, TransactionPage,
-    CreditCardTransactionResult, CreditCardTransactionPage,
-    HoldingsResult, HoldingsPage,
-    DepotTransactionResult, DepotTransactionPage,
+    Account, BalanceResult, BankParams, CreditCardTransactionPage, CreditCardTransactionResult,
+    DepotHistoryResult, DepotHistorySnapshot, DepotTransactionPage, DepotTransactionResult, Dialog,
+    HoldingsPage, HoldingsResult, InitResult, New, Open, PollResult, Response, SendResult, Synced,
+    TanChallenge, TanPending, TransactionPage, TransactionResult,
 };
 
 // Domain types
-pub use types::{
-    AccountBalance, SepaAccount, Transaction, TransactionStatus, TanMethod,
-    SecurityHolding, DepotTransaction, DepotTransactionDirection, Isin, Wkn,
-    Blz, UserId, Pin, SystemId, ProductId, DialogId, SecurityFunction,
-    TaskReference, SegmentType, TanMediumName, TouchdownPoint, SegmentRef,
-    Currency, Iban, Bic, TanProcess, ResponseCodeKind, ResponseCode,
-    BankName, FinTSUrl, ChallengeText, HhdUcData, Mt940Data,
-};
+pub use banks::{all_banks, bank_by_blz, BankConfig};
 pub use error::{FinTSError, Result};
-pub use banks::{BankConfig, all_banks, bank_by_blz};
+pub use types::{
+    AccountBalance, BankName, Bic, Blz, ChallengeText, Currency, DepotTransaction,
+    DepotTransactionDirection, DialogId, FinTSUrl, HhdUcData, Iban, Isin, Mt940Data, Pin,
+    ProductId, ResponseCode, ResponseCodeKind, SecurityFunction, SecurityHolding, SecurityReference,
+    SegmentRef, SegmentType, SepaAccount, SystemId, TanMediumName, TanMethod, TanProcess,
+    TaskReference, TouchdownPoint, Transaction, TransactionStatus, UserId, Wkn,
+};
 
 // Debug / audit tooling
-pub use debug::{DecodedMessage, DecodedSegment, VerbosityLevel, decode_message, format_decoded};
-pub use audit::{AuditReport, Violation, ViolationSeverity, audit_client_message, audit_server_response};
+pub use audit::{
+    audit_client_message, audit_server_response, AuditReport, Violation, ViolationSeverity,
+};
+pub use debug::{
+    decode_message, format_decoded, serialize_raw_segment, DecodedMessage, DecodedSegment,
+    VerbosityLevel,
+};

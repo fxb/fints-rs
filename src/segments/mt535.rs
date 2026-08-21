@@ -13,6 +13,8 @@
 //! :98A::PRIC//20170428                      price date
 //! :93B::AGGR//UNIT/16,8211                  quantity (units)
 //! :19A::HOLD//EUR512,43                     total market value
+//! :70E::HOLD//1STK+...+DE+20160402+          German structured details
+//! 250,39+EUR+                                acquisition price details
 //! :16S:FIN                                  end of the position block
 //! ```
 
@@ -72,6 +74,8 @@ pub(crate) fn parse_mt535(data: &[u8]) -> Vec<SecurityHolding> {
                 fields.market_value_currency = Some(rest[..3].to_string());
                 fields.market_value = parse_decimal(&rest[3..]);
             }
+        } else if let Some(rest) = line.strip_prefix(":70E::HOLD//") {
+            fields.parse_holdings_narrative(rest);
         }
     }
 
@@ -87,6 +91,9 @@ struct PositionFields {
     price: Option<Decimal>,
     price_currency: Option<String>,
     price_date: Option<NaiveDate>,
+    acquisition_date: Option<NaiveDate>,
+    acquisition_price: Option<Decimal>,
+    acquisition_price_currency: Option<String>,
     market_value: Option<Decimal>,
     market_value_currency: Option<String>,
 }
@@ -119,6 +126,39 @@ impl PositionFields {
         self.name = name_parts.join(" ");
     }
 
+    /// Parse the German structured form of MT535 `70E::HOLD`.
+    ///
+    /// Each physical line begins with its line number and the remaining
+    /// subfields are `+`-separated. On line 1, subfield 6 is the acquisition
+    /// date. On line 2, subfields 9 and 10 are the acquisition price and its
+    /// optional currency. After multiline collapse, for example:
+    /// `1STK+812+00028+DE+20260402+|250,39+EUR+|3|4`.
+    fn parse_holdings_narrative(&mut self, rest: &str) {
+        for line in rest.split('|') {
+            if let Some(line_one) = line.strip_prefix('1') {
+                let fields: Vec<_> = line_one.split('+').collect();
+                if let Some(value) = fields.get(4).map(|value| value.trim()) {
+                    if !value.is_empty() {
+                        self.acquisition_date =
+                            NaiveDate::parse_from_str(value, "%Y%m%d").ok();
+                    }
+                }
+            } else if let Some(line_two) = line.strip_prefix('2') {
+                let fields: Vec<_> = line_two.split('+').collect();
+                if let Some(value) = fields.first().map(|value| value.trim()) {
+                    if !value.is_empty() {
+                        self.acquisition_price = parse_decimal(value);
+                    }
+                }
+                if let Some(value) = fields.get(1).map(|value| value.trim()) {
+                    if !value.is_empty() {
+                        self.acquisition_price_currency = Some(value.to_string());
+                    }
+                }
+            }
+        }
+    }
+
     fn into_holding(self) -> Option<SecurityHolding> {
         // A position needs at least an identifier or a name
         if self.isin.is_none() && self.wkn.is_none() && self.name.is_empty() {
@@ -132,6 +172,9 @@ impl PositionFields {
             price: self.price,
             price_currency: self.price_currency.map(Currency::new),
             price_date: self.price_date,
+            acquisition_date: self.acquisition_date,
+            acquisition_price: self.acquisition_price,
+            acquisition_price_currency: self.acquisition_price_currency.map(Currency::new),
             market_value: self.market_value,
             market_value_currency: self.market_value_currency.map(Currency::new),
             acquisition_value: None,
@@ -255,5 +298,34 @@ COMST.-MSCI EM.MKTS.TRN U.ETF\r\n\
         assert_eq!(holdings[0].quantity, dec("5000"));
         assert_eq!(holdings[0].price, Some(dec("97.42")));
         assert!(holdings[0].price_currency.is_none());
+    }
+
+    #[test]
+    fn parses_german_structured_acquisition_details() {
+        let statement = "\
+:16R:FIN\r\n\
+:35B:ISIN DE000A41ED69 /DE/A41ED6\r\n\
+TBF SMART POWER INHABER-ANTEILE EUR S\r\n\
+:93B::AGGR//UNIT/589,78\r\n\
+:70E::HOLD//1STK+812+00028+DE+20260402+\r\n\
+250,39+EUR+\r\n\
+3\r\n\
+4\r\n\
+:16S:FIN\r\n";
+
+        let holdings = parse_mt535(statement.as_bytes());
+        assert_eq!(holdings.len(), 1);
+        assert_eq!(
+            holdings[0].acquisition_date,
+            NaiveDate::from_ymd_opt(2026, 4, 2)
+        );
+        assert_eq!(holdings[0].acquisition_price, Some(dec("50.39")));
+        assert_eq!(
+            holdings[0]
+                .acquisition_price_currency
+                .as_ref()
+                .map(|currency| currency.as_str()),
+            Some("EUR")
+        );
     }
 }

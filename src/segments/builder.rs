@@ -681,6 +681,61 @@ pub(crate) fn hkwdu(
     degs
 }
 
+// ---- DKWDH (Depot-Historie) - Historical Securities Position, version 1 ----
+// Sparkassen/Finanz-Informatik proprietary segment. The request schema was
+// established against HASPA's FinTS endpoint:
+//   DEG0 = header (DKWDH:segment_number:1)
+//   DEG1 = depot account (national KTV2)
+//   DEG2 = WPRef (type 1 = ISIN, type 2 = WKN; code)
+//   DEG3 = historical snapshot date
+// The DIWDH response contains a binary SWIFT MT535 statement.
+pub(crate) fn dkwdh(
+    segment_number: u16,
+    iban: &str,
+    national: Option<(&str, &str)>,
+    security_type: u8,
+    security_code: &str,
+    snapshot_date: NaiveDate,
+) -> Vec<DEG> {
+    let (account_number, blz) = national_identity(iban, national);
+    vec![
+        seg_header("DKWDH", segment_number, 1),
+        deg(vec![
+            de_text(&account_number),
+            de_empty(),
+            de_text("280"),
+            de_text(&blz),
+        ]),
+        deg(vec![
+            de_text(&security_type.to_string()),
+            de_text(security_code),
+        ]),
+        deg1(de_date(snapshot_date)),
+    ]
+}
+
+// ---- DKWVB, version 1 -------------------------------------------------------
+// Sparkassen/Finanz-Informatik proprietary segment. Its response semantics are
+// still undocumented, but the request structure is proven: KTV2 + J/N flag.
+// HASPA advertises DIWVBS v1 but may withhold account-level authorization.
+pub(crate) fn dkwvb(
+    segment_number: u16,
+    iban: &str,
+    national: Option<(&str, &str)>,
+) -> Vec<DEG> {
+    let (account_number, blz) = national_identity(iban, national);
+    vec![
+        seg_header("DKWVB", segment_number, 1),
+        deg(vec![
+            de_text(&account_number),
+            de_empty(),
+            de_text("280"),
+            de_text(&blz),
+        ]),
+        deg1(de_text("N")),
+    ]
+}
+
 // ---- DKKKU (Kreditkartenumsätze) - Credit Card Transactions, version 2 ----
 // Bank-proprietary segment (prefix "D" instead of "H"). Reverse-engineered from
 // python-fints. BPD parameter segment: DIKKUS. Response segment: DIKKU.
@@ -923,6 +978,30 @@ mod tests {
         let bytes = serialize_segment(&degs).unwrap();
         let wire = String::from_utf8(bytes).unwrap();
         assert_eq!(wire, "DKKKU:3:2+1207503333::280:20050550+5232520070549445++++NEXT123'");
+    }
+
+    #[test]
+    fn dkwdh_v1_wire_format() {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        let degs = dkwdh(
+            3,
+            "",
+            Some(("8030189693", "20050550")),
+            1,
+            "DE000A41ED69",
+            date,
+        );
+        let bytes = serialize_segment(&degs).unwrap();
+        let wire = String::from_utf8(bytes).unwrap();
+        assert_eq!(wire, "DKWDH:3:1+8030189693::280:20050550+1:DE000A41ED69+20260820'");
+    }
+
+    #[test]
+    fn dkwvb_v1_wire_format() {
+        let degs = dkwvb(3, "", Some(("8030189693", "20050550")));
+        let bytes = serialize_segment(&degs).unwrap();
+        let wire = String::from_utf8(bytes).unwrap();
+        assert_eq!(wire, "DKWVB:3:1+8030189693::280:20050550+N'");
     }
 
     #[test]

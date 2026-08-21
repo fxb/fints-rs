@@ -203,8 +203,8 @@ pub enum ResponseCodeKind {
     AuthenticationMissing,
     /// 9050 — Partial errors.
     PartialErrors,
-    /// 9110 — Unexpected order in sync dialog.
-    UnexpectedInSync,
+    /// 9110 — Unknown/invalid message, order list, or order structure.
+    InvalidStructure,
     /// 9160 — Data element missing.
     DataElementMissing,
     /// 9340 — PIN wrong.
@@ -242,17 +242,14 @@ impl ResponseCodeKind {
             "3060" => Self::PartialWarnings,
             "3076" => Self::ScaExemption,
             "3920" => Self::AllowedSecurityFunctions(
-                parameters
-                    .iter()
-                    .map(SecurityFunction::new)
-                    .collect(),
+                parameters.iter().map(SecurityFunction::new).collect(),
             ),
             "3955" => Self::DecoupledInitiated,
             "3956" => Self::DecoupledPending,
             "9010" => Self::GeneralError,
             "9040" => Self::AuthenticationMissing,
             "9050" => Self::PartialErrors,
-            "9110" => Self::UnexpectedInSync,
+            "9110" => Self::InvalidStructure,
             "9160" => Self::DataElementMissing,
             "9340" => Self::PinWrong,
             "9800" => Self::DialogAborted,
@@ -281,7 +278,7 @@ impl ResponseCodeKind {
             Self::GeneralError => "9010",
             Self::AuthenticationMissing => "9040",
             Self::PartialErrors => "9050",
-            Self::UnexpectedInSync => "9110",
+            Self::InvalidStructure => "9110",
             Self::DataElementMissing => "9160",
             Self::PinWrong => "9340",
             Self::DialogAborted => "9800",
@@ -324,7 +321,7 @@ impl ResponseCodeKind {
             Self::GeneralError
                 | Self::AuthenticationMissing
                 | Self::PartialErrors
-                | Self::UnexpectedInSync
+                | Self::InvalidStructure
                 | Self::DataElementMissing
                 | Self::PinWrong
                 | Self::DialogAborted
@@ -522,7 +519,7 @@ impl ResponseCode {
             ResponseCodeKind::GeneralError => "9010",
             ResponseCodeKind::AuthenticationMissing => "9040",
             ResponseCodeKind::PartialErrors => "9050",
-            ResponseCodeKind::UnexpectedInSync => "9110",
+            ResponseCodeKind::InvalidStructure => "9110",
             ResponseCodeKind::DataElementMissing => "9160",
             ResponseCodeKind::PinWrong => "9340",
             ResponseCodeKind::DialogAborted => "9800",
@@ -639,6 +636,29 @@ newtype_string!(/// ISIN (International Securities Identification Number), e.g. 
 newtype_string!(/// WKN (Wertpapierkennnummer), e.g. "514000".
     Wkn);
 
+/// A securities identifier accepted by FinTS' `WPRef` data-element group.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SecurityReference {
+    Isin(Isin),
+    Wkn(Wkn),
+}
+
+impl SecurityReference {
+    pub(crate) fn type_code(&self) -> u8 {
+        match self {
+            Self::Isin(_) => 1,
+            Self::Wkn(_) => 2,
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Isin(value) => value.as_str(),
+            Self::Wkn(value) => value.as_str(),
+        }
+    }
+}
+
 /// A single securities position in a depot.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityHolding {
@@ -656,6 +676,13 @@ pub struct SecurityHolding {
     pub price_currency: Option<Currency>,
     /// Date of the price quote.
     pub price_date: Option<NaiveDate>,
+    /// Purchase/acquisition date reported by the bank in the German
+    /// structured MT535 `70E::HOLD` field.
+    pub acquisition_date: Option<NaiveDate>,
+    /// Purchase price per unit reported by the bank.
+    pub acquisition_price: Option<Decimal>,
+    /// Currency of the purchase price. Absent when the price is a percentage.
+    pub acquisition_price_currency: Option<Currency>,
     /// Total market value (quantity * price).
     pub market_value: Option<Decimal>,
     /// Currency of the market value.

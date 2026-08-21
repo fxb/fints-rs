@@ -105,6 +105,14 @@ pub(crate) enum Segment {
         end_date: Option<NaiveDate>,
         touchdown: Option<TouchdownPoint>,
     },
+    /// DKWDH: Depot-Historie (historical position snapshot, bank-proprietary)
+    DepotHistory {
+        account: Account,
+        security: SecurityReference,
+        snapshot_date: NaiveDate,
+    },
+    /// DKWVB: undocumented Sparkassen depot operation (bank-proprietary)
+    Dkwvb { account: Account },
     /// DKKKU: Kreditkartenumsätze (credit card transactions, bank-proprietary)
     CreditCardTransactions {
         account: Account,
@@ -170,6 +178,19 @@ impl Segment {
                 let version = params.supported_version("HIWDUS", 7).max(1);
                 require_iban(account, "HKWDU", version)?;
                 hkwdu(0, version, account.iban(), account.bic(), account.national_identity(), *start_date, *end_date, touchdown.as_ref().map(|t| t.as_str()))
+            }
+            Segment::DepotHistory { account, security, snapshot_date } => {
+                dkwdh(
+                    0,
+                    account.iban(),
+                    account.national_identity(),
+                    security.type_code(),
+                    security.as_str(),
+                    *snapshot_date,
+                )
+            }
+            Segment::Dkwvb { account } => {
+                dkwvb(0, account.iban(), account.national_identity())
             }
             Segment::CreditCardTransactions { account, credit_card_number, start_date, touchdown } => {
                 dkkku(0, account.iban(), account.national_identity(), credit_card_number, *start_date, touchdown.as_ref().map(|t| t.as_str()))
@@ -980,6 +1001,19 @@ pub enum HoldingsResult {
     Empty,
 }
 
+/// A historical depot position snapshot returned by DKWDH.
+pub struct DepotHistorySnapshot {
+    pub snapshot_date: NaiveDate,
+    pub holdings: Vec<SecurityHolding>,
+}
+
+/// Result of a Sparkassen Depot-Historie request.
+pub enum DepotHistoryResult {
+    Success(DepotHistorySnapshot),
+    NeedTan(TanChallenge),
+    Empty,
+}
+
 /// Result of a single depot transactions request page.
 pub struct DepotTransactionPage {
     /// Parsed depot transactions.
@@ -1175,6 +1209,71 @@ impl Dialog<Open> {
             holdings,
             touchdown: td,
         }))
+    }
+
+    /// Request a historical position snapshot using Sparkassen DKWDH v1.
+    ///
+    /// DKWDH is PIN-only at Finanz-Informatik banks and is not consistently
+    /// listed in HIPINS, so no HKTAN segment is bundled. The selected depot
+    /// must list DKWDH in its UPD permissions.
+    pub async fn depot_history(
+        &mut self,
+        account: &Account,
+        security: &SecurityReference,
+        snapshot_date: NaiveDate,
+    ) -> Result<DepotHistoryResult> {
+        info!("[FinTS] depot history: DKWDH (no HKTAN)");
+
+        let response = self.send_segments(&[Segment::DepotHistory {
+            account: account.clone(),
+            security: security.clone(),
+            snapshot_date,
+        }]).await?;
+
+        for c in response.all_codes() {
+            if c.is_error() || c.is_warning() {
+                info!("[FinTS] DKWDH: {} - {}", c.code(), c.text);
+            }
+        }
+
+        if response.needs_tan() && !response.has_sca_exemption() {
+            if let Some(challenge) = response.get_tan_challenge() {
+                return Ok(DepotHistoryResult::NeedTan(challenge));
+            }
+        }
+
+        response.check_errors()?;
+        let holdings = parse_diwdh(&response.segments);
+        if holdings.is_empty() {
+            return Ok(DepotHistoryResult::Empty);
+        }
+
+        Ok(DepotHistoryResult::Success(DepotHistorySnapshot {
+            snapshot_date,
+            holdings,
+        }))
+    }
+
+    /// Send the structurally known DKWVB v1 request.
+    ///
+    /// The operation's response schema and purpose remain undocumented. This
+    /// method intentionally returns the raw response and never bundles HKTAN;
+    /// banks may reject it with 9370 when the depot lacks institutional
+    /// authorization.
+    pub async fn dkwvb(&mut self, account: &Account) -> Result<Response> {
+        info!("[FinTS] DKWVB (no HKTAN)");
+        let response = self.send_segments(&[Segment::Dkwvb {
+            account: account.clone(),
+        }]).await?;
+
+        for c in response.all_codes() {
+            if c.is_error() || c.is_warning() {
+                info!("[FinTS] DKWVB: {} - {}", c.code(), c.text);
+            }
+        }
+
+        response.check_errors()?;
+        Ok(response)
     }
 
     /// Request depot transactions (HKWDU) — single page.
