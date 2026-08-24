@@ -47,6 +47,7 @@
 // ── Infrastructure ──
 pub mod banks;
 pub mod banks_generated;
+pub mod camt;
 pub mod error;
 pub(crate) mod message;
 pub mod parser;

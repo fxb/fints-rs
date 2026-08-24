@@ -814,6 +814,25 @@ impl AnyBank {
                 }
             }
         }
+        if opts.camt_transactions && !opts.skip_parsing {
+            for doc in all_camt_booked.documents() {
+                match crate::camt::parse_camt052(doc) {
+                    Ok(txns) => transactions.extend(txns),
+                    Err(e) => warn!("CAMT booked parse failed: {e}"),
+                }
+            }
+            for doc in all_camt_pending.documents() {
+                match crate::camt::parse_camt052(doc) {
+                    Ok(mut txns) => {
+                        for tx in &mut txns {
+                            tx.status = TransactionStatus::Pending;
+                        }
+                        transactions.extend(txns);
+                    }
+                    Err(e) => warn!("CAMT pending parse failed: {e}"),
+                }
+            }
+        }
 
         // ── Holdings ──
         let holdings = if opts.holdings {
