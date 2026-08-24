@@ -399,6 +399,50 @@ pub(crate) fn extract_mt940_data(segments: &[RawSegment]) -> Mt940ExtractedData 
     Mt940ExtractedData { booked, pending }
 }
 
+/// Extracted CAMT.052 XML data from HICAZ segments. Each entry is a complete
+/// XML document — banks may split a date range across multiple documents.
+pub struct CamtExtractedData {
+    pub booked: Vec<Vec<u8>>,
+    pub pending: Vec<Vec<u8>>,
+}
+
+/// Parse HICAZ (CAMT statement response) — extracts the raw CAMT XML data.
+///
+/// HICAZ layout:
+///   DEG[0]: header
+///   DEG[1]: account (IBAN + BIC)
+///   DEG[2]: CAMT schema URN
+///   DEG[3]: booked transactions — multiple binary DEs, each a complete
+///           camt.052 XML document
+///   DEG[4]: pending transactions (optional) — same format
+pub(crate) fn extract_camt_data(segments: &[RawSegment]) -> CamtExtractedData {
+    let mut booked = Vec::new();
+    let mut pending = Vec::new();
+
+    for seg in segments {
+        if seg.segment_type() == "HICAZ" {
+            // DEG[3] = booked: collect all binary DEs
+            if let Some(deg) = seg.degs.get(3) {
+                for de in &deg.0 {
+                    if let crate::parser::DataElement::Binary(data) = de {
+                        booked.push(data.clone());
+                    }
+                }
+            }
+            // DEG[4] = pending: collect all binary DEs
+            if let Some(deg) = seg.degs.get(4) {
+                for de in &deg.0 {
+                    if let crate::parser::DataElement::Binary(data) = de {
+                        pending.push(data.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    CamtExtractedData { booked, pending }
+}
+
 /// Parse HIWPD (securities depot response) — extracts holdings.
 ///
 /// HIWPD response segment structure per FinTS spec:

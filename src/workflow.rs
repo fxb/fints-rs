@@ -57,6 +57,10 @@ pub struct FetchResult {
     /// Concatenated HIKAZ DEG2 pages: raw pending transactions, which banks
     /// deliver in MT942 format, Windows-1252 encoded. Always populated.
     pub raw_pending: Mt940Data,
+    /// Concatenated HICAZ DEG1 pages: raw booked transactions in CAMT.052 XML.
+    pub raw_camt_booked: CamtData,
+    /// Concatenated HICAZ DEG2 pages: raw pending transactions in CAMT.052 XML.
+    pub raw_camt_pending: CamtData,
 }
 
 /// Options controlling what data to fetch in a single authenticated dialog.
@@ -66,6 +70,9 @@ pub struct FetchOpts {
     pub balance: bool,
     /// Fetch transactions (HKKAZ). Default: true.
     pub transactions: bool,
+    /// Fetch transactions in CAMT.052 format (HKCAZ). When true, `transactions`
+    /// (HKKAZ/MT940) is skipped and CAMT is used instead.
+    pub camt_transactions: bool,
     /// Fetch securities holdings (HKWPD). Default: true.
     pub holdings: bool,
     /// Fetch depot transactions (HKWDU). For securities/depot accounts.
@@ -416,6 +423,8 @@ impl BankOps for Dkb {
             depot_transactions: Vec::new(),
             raw_booked: all_booked,
             raw_pending: all_pending,
+            raw_camt_booked: CamtData::new(),
+            raw_camt_pending: CamtData::new(),
         })
     }
 
@@ -734,7 +743,7 @@ impl AnyBank {
         // ── Transactions ──
         let mut all_booked = Mt940Data::new();
         let mut all_pending = Mt940Data::new();
-        if opts.transactions {
+        if opts.transactions && !opts.camt_transactions {
             let end_date = chrono::Utc::now().date_naive();
             let start_date = end_date - chrono::Duration::days(opts.days.max(1) as i64);
             let mut td: Option<TouchdownPoint> = None;
@@ -758,7 +767,7 @@ impl AnyBank {
                 }
             }
         }
-        let mut transactions = if opts.transactions && !opts.skip_parsing {
+        let mut transactions = if opts.transactions && !opts.camt_transactions && !opts.skip_parsing {
             let mut txns = match parse_mt940(all_booked.as_bytes(), TransactionStatus::Booked) {
                 Ok(t) => t,
                 Err(e) => {
@@ -776,6 +785,35 @@ impl AnyBank {
         } else {
             Vec::new()
         };
+
+        // ── CAMT Transactions (HKCAZ) ──
+        let mut all_camt_booked = CamtData::new();
+        let mut all_camt_pending = CamtData::new();
+        if opts.camt_transactions {
+            let end_date = chrono::Utc::now().date_naive();
+            let start_date = end_date - chrono::Duration::days(opts.days.max(1) as i64);
+            let mut td: Option<TouchdownPoint> = None;
+            loop {
+                use crate::protocol::CamtTransactionResult;
+                match dialog.camt_transactions(account, start_date, end_date, td.as_ref()).await? {
+                    CamtTransactionResult::NeedTan(challenge) => {
+                        if let Some(notify) = on_tan {
+                            notify(true);
+                            await_decoupled_tan(dialog, &challenge.task_reference).await?;
+                            notify(false);
+                            continue;
+                        }
+                        break;
+                    }
+                    CamtTransactionResult::Success(page) => {
+                        if !page.booked.is_empty() { all_camt_booked.extend(page.booked.0); }
+                        if !page.pending.is_empty() { all_camt_pending.extend(page.pending.0); }
+                        td = page.touchdown;
+                        if td.is_none() { break; }
+                    }
+                }
+            }
+        }
 
         // ── Holdings ──
         let holdings = if opts.holdings {
@@ -835,6 +873,8 @@ impl AnyBank {
             depot_transactions,
             raw_booked: all_booked,
             raw_pending: all_pending,
+            raw_camt_booked: all_camt_booked,
+            raw_camt_pending: all_camt_pending,
         })
     }
 }

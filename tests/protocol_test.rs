@@ -418,6 +418,8 @@ fn test_fetch_result_includes_holdings() {
         depot_transactions: vec![],
         raw_booked: fints::Mt940Data::new(),
         raw_pending: fints::Mt940Data::new(),
+        raw_camt_booked: fints::CamtData::new(),
+        raw_camt_pending: fints::CamtData::new(),
     };
     assert!(result.holdings.is_empty());
     assert!(result.raw_booked.is_empty());

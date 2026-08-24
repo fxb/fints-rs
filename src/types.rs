@@ -100,6 +100,33 @@ impl Mt940Data {
     }
 }
 
+/// CAMT.052 XML data from HICAZ segments. Banks may split a date range
+/// across multiple XML documents, so this holds a list of complete documents.
+#[derive(Debug, Clone)]
+pub struct CamtData(pub Vec<Vec<u8>>);
+
+impl Default for CamtData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CamtData {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    /// Individual XML documents.
+    pub fn documents(&self) -> &[Vec<u8>] {
+        &self.0
+    }
+    pub fn extend(&mut self, docs: Vec<Vec<u8>>) {
+        self.0.extend(docs);
+    }
+}
+
 /// PIN — redacts on Display to prevent logging.
 #[derive(Clone)]
 pub struct Pin(String);

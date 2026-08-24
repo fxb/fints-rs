@@ -92,6 +92,13 @@ pub(crate) enum Segment {
         end_date: NaiveDate,
         touchdown: Option<TouchdownPoint>,
     },
+    /// HKCAZ: Kontoumsätze im CAMT-Format (CAMT.052 transaction request)
+    CamtTransactions {
+        account: Account,
+        start_date: NaiveDate,
+        end_date: NaiveDate,
+        touchdown: Option<TouchdownPoint>,
+    },
     /// HKWPD: Wertpapierdepotaufstellung (securities holdings request)
     Holdings {
         account: Account,
@@ -168,6 +175,11 @@ impl Segment {
                 let version = params.supported_version("HIKAZS", 7).max(5);
                 require_iban(account, "HKKAZ", version)?;
                 hkkaz(0, version, account.iban(), account.bic(), account.national_identity(), *start_date, *end_date, touchdown.as_ref().map(|t| t.as_str()))
+            }
+            Segment::CamtTransactions { account, start_date, end_date, touchdown } => {
+                let version = params.supported_version("HICAZS", 1).max(1);
+                require_iban(account, "HKCAZ", version)?;
+                hkcaz(0, version, account.iban(), account.bic(), None, *start_date, *end_date, touchdown.as_ref().map(|t| t.as_str()))
             }
             Segment::Holdings { account, currency, touchdown } => {
                 let version = params.supported_version("HIWPDS", 7).max(1);
@@ -967,6 +979,24 @@ pub enum TransactionResult {
     NeedTan(TanChallenge),
 }
 
+/// Result of a CAMT.052 transaction request (single page).
+pub struct CamtTransactionPage {
+    /// CAMT.052 booked transaction data (XML).
+    pub booked: CamtData,
+    /// CAMT.052 pending transaction data (XML).
+    pub pending: CamtData,
+    /// If Some, more data is available — call `camt_transactions()` again with this value.
+    pub touchdown: Option<TouchdownPoint>,
+}
+
+/// Result of a CAMT.052 transaction request.
+pub enum CamtTransactionResult {
+    /// Transaction data retrieved (may need more pages via touchdown).
+    Success(CamtTransactionPage),
+    /// Bank requires TAN for this operation.
+    NeedTan(TanChallenge),
+}
+
 /// Result of a credit card transaction request.
 pub struct CreditCardTransactionPage {
     /// Parsed credit card transactions from DIKKU segments.
@@ -1141,6 +1171,66 @@ impl Dialog<Open> {
         Ok(TransactionResult::Success(TransactionPage {
             booked: Mt940Data(mt940.booked),
             pending: Mt940Data(mt940.pending),
+            touchdown: td,
+        }))
+    }
+
+    /// Request account transactions in CAMT.052 format (HKCAZ) — single page.
+    ///
+    /// Takes a validated `Account`. For pagination, pass the `touchdown` value
+    /// from a previous `CamtTransactionPage` — pass `None` for the first request.
+    pub async fn camt_transactions(
+        &mut self,
+        account: &Account,
+        start_date: NaiveDate,
+        end_date: NaiveDate,
+        touchdown: Option<&TouchdownPoint>,
+    ) -> Result<CamtTransactionResult> {
+        let is_first = touchdown.is_none();
+        let hkcaz = SegmentType::new("HKCAZ");
+        let needs_tan = self.params.needs_tan(&hkcaz);
+
+        let mut segments = vec![
+            Segment::CamtTransactions {
+                account: account.clone(),
+                start_date,
+                end_date,
+                touchdown: touchdown.cloned(),
+            },
+        ];
+
+        if needs_tan {
+            info!("[FinTS] camt_transactions: HKCAZ + HKTAN:4 (HIPINS: TAN required{})", if is_first { "" } else { ", touchdown" });
+            segments.push(Segment::TanProcess4 {
+                reference_seg: SegmentRef::new("HKCAZ"),
+                tan_medium: self.params.selected_tan_medium.clone(),
+            });
+        } else if is_first {
+            info!("[FinTS] camt_transactions: HKCAZ (HIPINS: PIN-only)");
+        }
+
+        let response = self.send_segments(&segments).await?;
+
+        for c in response.all_codes() {
+            if c.is_error() || c.is_warning() {
+                info!("[FinTS] HKCAZ: {} - {}", c.code(), c.text);
+            }
+        }
+
+        if response.needs_tan() && !response.has_sca_exemption() {
+            if let Some(challenge) = response.get_tan_challenge() {
+                return Ok(CamtTransactionResult::NeedTan(challenge));
+            }
+        }
+
+        response.check_errors()?;
+
+        let camt = extract_camt_data(&response.segments);
+        let td = response.touchdown();
+
+        Ok(CamtTransactionResult::Success(CamtTransactionPage {
+            booked: CamtData(camt.booked),
+            pending: CamtData(camt.pending),
             touchdown: td,
         }))
     }

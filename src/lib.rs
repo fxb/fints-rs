@@ -80,17 +80,18 @@ pub use workflow::{FetchOpts, FetchResult, InitiateNoTanResult, InitiateOutcome,
 
 // Protocol layer
 pub use protocol::{
-    Account, BalanceResult, BankParams, CreditCardTransactionPage, CreditCardTransactionResult,
-    DepotHistoryResult, DepotHistorySnapshot, DepotTransactionPage, DepotTransactionResult, Dialog,
-    HoldingsPage, HoldingsResult, InitResult, New, Open, PollResult, Response, SendResult, Synced,
-    TanChallenge, TanPending, TransactionPage, TransactionResult,
+    Account, BalanceResult, BankParams, CamtTransactionPage, CamtTransactionResult,
+    CreditCardTransactionPage, CreditCardTransactionResult, DepotHistoryResult,
+    DepotHistorySnapshot, DepotTransactionPage, DepotTransactionResult, Dialog, HoldingsPage,
+    HoldingsResult, InitResult, New, Open, PollResult, Response, SendResult, Synced, TanChallenge,
+    TanPending, TransactionPage, TransactionResult,
 };
 
 // Domain types
 pub use banks::{all_banks, bank_by_blz, BankConfig};
 pub use error::{FinTSError, Result};
 pub use types::{
-    AccountBalance, BankName, Bic, Blz, ChallengeText, Currency, DepotTransaction,
+    AccountBalance, BankName, Bic, Blz, CamtData, ChallengeText, Currency, DepotTransaction,
     DepotTransactionDirection, DialogId, FinTSUrl, HhdUcData, Iban, Isin, Mt940Data, Pin,
     ProductId, ResponseCode, ResponseCodeKind, SecurityFunction, SecurityHolding, SecurityReference,
     SegmentRef, SegmentType, SepaAccount, SystemId, TanMediumName, TanMethod, TanProcess,

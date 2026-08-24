@@ -558,6 +558,56 @@ pub(crate) fn hkkaz(
     degs
 }
 
+// ---- HKCAZ (Kontoumsätze im CAMT-Format) - CAMT.052 Statement Request ----
+
+/// Build HKCAZ to request account transactions in CAMT.052 XML format.
+/// HKCAZ returns HICAZ response with CAMT.052 XML data instead of MT940.
+///
+/// Field order (per FinTS spec):
+///   1. KTI (international account: IBAN + BIC)
+///   2. Supported CAMT messages (URN)
+///   3. All accounts ("N")
+///   4. Start date
+///   5. End date
+///   6. Max entries
+///   7. Touchdown
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn hkcaz(
+    segment_number: u16,
+    version: u16,
+    iban: &str,
+    bic: &str,
+    camt_urn: Option<&str>,
+    start_date: NaiveDate,
+    end_date: NaiveDate,
+    touchdown: Option<&str>,
+) -> Vec<DEG> {
+    let mut degs = vec![
+        seg_header("HKCAZ", segment_number, version),
+        Kti::new(iban, bic).to_deg(),
+    ];
+
+    // Supported CAMT messages URN
+    degs.push(deg1(match camt_urn {
+        Some(urn) => de_text(urn),
+        None => de_text("urn:iso:std:iso:20022:tech:xsd:camt.052.001.02"),
+    }));
+
+    degs.push(deg1(de_text("N")));
+    degs.push(deg1(de_date(start_date)));
+    degs.push(deg1(de_date(end_date)));
+
+    // Max entries
+    degs.push(deg1(de_empty()));
+
+    // Touchdown
+    if let Some(td) = touchdown {
+        degs.push(deg1(de_text(td)));
+    }
+
+    degs
+}
+
 // ---- HKWPD (Wertpapierdepotaufstellung) - Securities Holdings Request, version 1-7 ----
 
 /// Build HKWPD to request the securities depot listing for a SEPA account.
