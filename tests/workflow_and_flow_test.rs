@@ -158,6 +158,8 @@ fn sync_result_serde_roundtrip() {
         purpose: Some("Rechnung".to_string()),
         posting_text: None,
         reference: Some("REF-123".to_string()),
+        purpose_code: None,
+        mandate_id: None,
         raw: serde_json::json!({"date": "2025-01-15"}),
         status: TransactionStatus::Booked,
     };

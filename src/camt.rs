@@ -128,6 +128,12 @@ fn handle_text(eb: &mut EntryBuilder, path: &[String], text: &str) {
         eb.prtry_ref_value = Some(text.to_string());
     } else if path_ends_with(path, &["TxDtls", "BkTxCd", "Prtry", "Cd"]) {
         eb.bk_tx_cd = Some(text.to_string());
+    } else if path_ends_with(path, &["TxDtls", "RltdPties", "UltmtDbtr", "Nm"]) {
+        eb.ultimate_debtor_name = Some(text.to_string());
+    } else if path_ends_with(path, &["TxDtls", "RltdPties", "UltmtCdtr", "Nm"]) {
+        eb.ultimate_creditor_name = Some(text.to_string());
+    } else if path_ends_with(path, &["TxDtls", "Purp", "Cd"]) {
+        eb.purpose_code = Some(text.to_string());
     }
 }
 
@@ -147,6 +153,9 @@ struct EntryBuilder {
     creditor_name: Option<String>,
     creditor_iban: Option<String>,
     creditor_bic: Option<String>,
+    ultimate_debtor_name: Option<String>,
+    ultimate_creditor_name: Option<String>,
+    purpose_code: Option<String>,
     end_to_end_id: Option<String>,
     mandate_id: Option<String>,
     prtry_ref_type: Option<String>,
@@ -187,15 +196,18 @@ impl EntryBuilder {
             .unwrap_or(fallback_currency);
         let currency = Currency::new(currency_str);
 
+        // The ultimate counterparty is the actual merchant (e.g. the shop
+        // behind a PayPal or card payment). Prefer it over the direct
+        // counterparty, which is often just the payment processor.
         let (applicant_name, applicant_iban, applicant_bic) = if is_debit {
             (
-                self.creditor_name,
+                self.ultimate_creditor_name.or(self.creditor_name),
                 self.creditor_iban.map(Iban::new),
                 self.creditor_bic.map(Bic::new),
             )
         } else {
             (
-                self.debtor_name,
+                self.ultimate_debtor_name.or(self.debtor_name),
                 self.debtor_iban.map(Iban::new),
                 self.debtor_bic.map(Bic::new),
             )
@@ -232,6 +244,8 @@ impl EntryBuilder {
             purpose: self.remittance_info,
             posting_text: self.addtl_ntry_inf,
             reference,
+            purpose_code: self.purpose_code,
+            mandate_id: self.mandate_id.clone(),
             raw,
             status,
         })
@@ -333,8 +347,10 @@ mod tests {
               </Prtry>
             </Refs>
             <RltdPties>
-              <Cdtr><Nm>Cafe Europa</Nm></Cdtr>
+              <Cdtr><Nm>Landesbank Hessen-Thuringen</Nm></Cdtr>
+              <UltmtCdtr><Nm>CIRCLE K VETLANDA/STORGATAN 51</Nm></UltmtCdtr>
             </RltdPties>
+            <Purp><Cd>IDCP</Cd></Purp>
             <RmtInf>
               <Ustrd>Kartenzahlung 10.50 SEK Kurs 1.1798</Ustrd>
             </RmtInf>
@@ -428,14 +444,19 @@ mod tests {
     }
 
     #[test]
-    fn parse_card_payment_with_foreign_currency() {
+    fn parse_card_payment_prefers_ultimate_creditor() {
         let txs = parse_camt052(test_document()).unwrap();
         let tx = &txs[2];
 
         assert_eq!(tx.amount, Decimal::from_str("-8.90").unwrap());
-        assert_eq!(tx.applicant_name.as_deref(), Some("Cafe Europa"));
+        // UltmtCdtr is the actual merchant, preferred over the intermediary
+        assert_eq!(
+            tx.applicant_name.as_deref(),
+            Some("CIRCLE K VETLANDA/STORGATAN 51")
+        );
         assert_eq!(tx.applicant_iban, None);
         assert_eq!(tx.posting_text.as_deref(), Some("KARTENZAHLUNG"));
+        assert_eq!(tx.purpose_code.as_deref(), Some("IDCP"));
         assert_eq!(
             tx.purpose.as_deref(),
             Some("Kartenzahlung 10.50 SEK Kurs 1.1798")

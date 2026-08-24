@@ -1078,6 +1078,8 @@ fn parse_mt940(data: &[u8], status: TransactionStatus) -> Result<Vec<Transaction
                 applicant_bic: applicant_bic.map(Bic::new),
                 purpose, posting_text,
                 reference: Some(line.customer_ref.clone()),
+                purpose_code: None,
+                mandate_id: None,
                 raw, status: status.clone(),
             });
         }

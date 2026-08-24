@@ -931,6 +931,8 @@ pub(crate) fn parse_dikku(segments: &[RawSegment]) -> Vec<Transaction> {
                 purpose: Some(purpose),
                 posting_text,
                 reference: None,
+                purpose_code: None,
+                mandate_id: None,
                 raw,
                 status,
             });

@@ -765,6 +765,10 @@ pub struct Transaction {
     pub purpose: Option<String>,
     pub posting_text: Option<String>,
     pub reference: Option<String>,
+    /// ISO 20022 purpose code (e.g. `IDCP`, `CDDP`). Populated from CAMT only.
+    pub purpose_code: Option<String>,
+    /// SEPA mandate reference. Stable across syncs, useful for dedup.
+    pub mandate_id: Option<String>,
     pub raw: serde_json::Value,
     /// Whether this transaction is booked or pending.
     pub status: TransactionStatus,
