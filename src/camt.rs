@@ -105,7 +105,13 @@ fn handle_text(eb: &mut EntryBuilder, path: &[String], text: &str) {
     } else if path_ends_with(path, &["Ntry", "AddtlNtryInf"]) {
         eb.addtl_ntry_inf = Some(text.to_string());
     } else if path_ends_with(path, &["TxDtls", "RmtInf", "Ustrd"]) {
-        eb.remittance_info = Some(text.to_string());
+        // Banks split long remittance text across multiple <Ustrd> elements
+        // (each ~27 chars, matching the MT940 subfield limit). Concatenate
+        // them to recover the full text.
+        eb.remittance_info = Some(match eb.remittance_info.take() {
+            Some(mut existing) => { existing.push_str(text); existing }
+            None => text.to_string(),
+        });
     } else if path_ends_with(path, &["TxDtls", "RltdPties", "Dbtr", "Nm"]) {
         eb.debtor_name = Some(text.to_string());
     } else if path_ends_with(path, &["TxDtls", "RltdPties", "DbtrAcct", "Id", "IBAN"]) {
@@ -379,6 +385,27 @@ mod tests {
         </NtryDtls>
       </Ntry>
       <Ntry>
+        <Amt Ccy="EUR">9.99</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><Dt>2026-08-19</Dt></BookgDt>
+        <ValDt><Dt>2026-08-19</Dt></ValDt>
+        <AddtlNtryInf>EIGENE KREDITKARTENABRECHN.</AddtlNtryInf>
+        <NtryDtls>
+          <TxDtls>
+            <RltdPties>
+              <Cdtr><Nm>Haspa Hamburg</Nm></Cdtr>
+            </RltdPties>
+            <RmtInf>
+              <Ustrd>HASPA-EUROCARD-X-TENSION MA</Ustrd>
+              <Ustrd>STERCARD 523252XXXXXX4731 A</Ustrd>
+              <Ustrd>PPLE.COM/BILL CORK 17.08.20</Ustrd>
+              <Ustrd>26 9.99 EUR</Ustrd>
+            </RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+      <Ntry>
         <Amt Ccy="EUR">100.00</Amt>
         <CdtDbtInd>CRDT</CdtDbtInd>
         <Sts>BOOK</Sts>
@@ -480,9 +507,26 @@ mod tests {
     }
 
     #[test]
-    fn parse_entry_without_tx_details() {
+    fn parse_multi_ustrd_concatenated() {
         let txs = parse_camt052(test_document()).unwrap();
         let tx = &txs[4];
+
+        assert_eq!(tx.amount, Decimal::from_str("-9.99").unwrap());
+        assert_eq!(tx.applicant_name.as_deref(), Some("Haspa Hamburg"));
+        assert_eq!(
+            tx.purpose.as_deref(),
+            Some("HASPA-EUROCARD-X-TENSION MASTERCARD 523252XXXXXX4731 APPLE.COM/BILL CORK 17.08.2026 9.99 EUR")
+        );
+        assert_eq!(
+            tx.posting_text.as_deref(),
+            Some("EIGENE KREDITKARTENABRECHN.")
+        );
+    }
+
+    #[test]
+    fn parse_entry_without_tx_details() {
+        let txs = parse_camt052(test_document()).unwrap();
+        let tx = &txs[5];
 
         assert_eq!(tx.date, NaiveDate::from_ymd_opt(2026, 8, 17).unwrap());
         assert_eq!(tx.amount, Decimal::from_str("100.00").unwrap());
@@ -497,7 +541,7 @@ mod tests {
     #[test]
     fn parse_multiple_entries() {
         let txs = parse_camt052(test_document()).unwrap();
-        assert_eq!(txs.len(), 5);
+        assert_eq!(txs.len(), 6);
     }
 
     #[test]
