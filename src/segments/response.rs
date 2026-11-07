@@ -86,7 +86,7 @@ pub(crate) fn parse_hitans(seg: &RawSegment) -> Vec<TanMethod> {
         };
 
         let display_name = if name.is_empty() {
-            format!("TAN-{}", &security_function)
+            format!("TAN-{security_function}")
         } else {
             name
         };

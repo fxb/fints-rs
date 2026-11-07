@@ -43,10 +43,7 @@ pub fn parse_camt052(xml: &[u8]) -> Result<Vec<Transaction>, String> {
                 if local == "Ntry" {
                     if let Some(eb) = entry.take() {
                         let fallback_ccy = report_currency.as_deref().unwrap_or("EUR");
-                        match eb.build(fallback_ccy) {
-                            Ok(tx) => transactions.push(tx),
-                            Err(err) => return Err(err),
-                        }
+                        transactions.push(eb.build(fallback_ccy)?);
                     }
                 }
 
